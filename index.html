@@ -1,0 +1,1247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>subforge · 订阅配置生成</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --card: #171f2e;
+    --card-2: #1d2738;
+    --border: #2a3648;
+    --text: #dbe4f0;
+    --muted: #8b98ab;
+    --accent: #4c9aff;
+    --green: #3ecf8e;
+    --red: #ff5f6d;
+    --yellow: #ffc46b;
+    --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    padding: 20px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  h1 { font-size: 20px; font-weight: 600; }
+  h1 small { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
+  .badge {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  .badge.idle { color: var(--muted); }
+  .badge.running { color: var(--yellow); border-color: var(--yellow); animation: pulse 1.2s infinite; }
+  @keyframes pulse { 50% { opacity: 0.5; } }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .card .value {
+    font-family: var(--mono);
+    font-size: 13px;
+    word-break: break-all;
+  }
+  .card .value.warn { color: var(--yellow); }
+  .card .value.ok { color: var(--green); }
+  .card .value.err { color: var(--red); }
+
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .panel h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel h2 .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+  /* 核心面板醒目 */
+  .panel.core { border-color: var(--accent); }
+
+  /* 高级设置折叠区 */
+  details.advanced {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  details.advanced summary {
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    user-select: none;
+    padding: 4px 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  details.advanced summary::before { content: "▸"; color: var(--muted); transition: transform 0.15s; }
+  details.advanced[open] summary::before { transform: rotate(90deg); }
+  details.advanced summary:hover { color: var(--accent); }
+  details.advanced summary .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  button {
+    background: var(--card-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+  button.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+
+  .switch-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 4px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .switch-row:last-child { border-bottom: none; }
+  .switch-row .desc { flex: 1; font-size: 13px; }
+  .switch-row .desc small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .var-input {
+    width: 100%;
+    margin-top: 6px;
+    background: #0b1018;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 12px;
+    font-family: var(--mono);
+    box-sizing: border-box;
+  }
+  .var-input:focus { outline: none; border-color: var(--accent); }
+  .var-saved { color: var(--green); font-size: 11px; margin-left: 8px; opacity: 0; transition: opacity 0.4s; }
+  .var-saved.show { opacity: 1; }
+  .switch {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .slider::before {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 3px;
+    top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(18px); }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    background: #0b1018;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    max-height: 420px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #log { color: #c3cedd; }
+  .log-time { color: var(--muted); }
+  .log-ok { color: var(--green); }
+  .log-err { color: var(--red); }
+
+  .diff { font-family: var(--mono); font-size: 12px; line-height: 1.5; max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: #0b1018; }
+  .diff .line { display: flex; gap: 10px; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
+  .diff .ln { color: #3d4c63; width: 34px; text-align: right; flex-shrink: 0; user-select: none; }
+  .diff .same { color: #8b98ab; }
+  .diff .add { background: rgba(62, 207, 142, 0.10); color: var(--green); }
+  .diff .del { background: rgba(255, 95, 109, 0.10); color: var(--red); }
+  .diff .mark { flex-shrink: 0; width: 14px; user-select: none; }
+
+  .empty { color: var(--muted); font-size: 13px; padding: 20px; text-align: center; }
+
+  .sel-sort { border: 1px dashed var(--border); border-radius: 8px; padding: 6px; background: #0b1018; }
+  .sel-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    margin: 3px 0;
+    background: var(--card-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: grab;
+    user-select: none;
+  }
+  .sel-item:hover { border-color: var(--accent); }
+  .sel-item.dragging { opacity: 0.45; border-color: var(--accent); }
+  .sel-grip { color: var(--muted); cursor: grab; }
+  .sel-grip:hover { color: var(--accent); }
+  .sel-x { color: var(--muted); cursor: pointer; padding: 0 4px; }
+  .sel-x:hover { color: var(--red); }
+  .task-status { font-size: 13px; color: var(--muted); }
+  .task-status b { color: var(--text); }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>subforge<small>订阅 → mihomoScript.js → YAML</small></h1>
+  <span id="stateBadge" class="badge idle">空闲</span>
+</header>
+
+<!-- ============ 核心面板 ============ -->
+<div class="panel core">
+  <h2>生成 Clash 配置<span class="hint">填入订阅链接，点「生成 YAML」即可</span></h2>
+
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input id="coreSubInput" class="var-input" type="text" style="flex:1;min-width:320px;width:auto;margin-top:0"
+      placeholder="https://机场.com/sub/xxxx" spellcheck="false">
+    <button id="btnCoreSubSave">保存订阅</button>
+    <span class="task-status" id="coreSubMsg"></span>
+  </div>
+
+  <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+    <button id="btnCoreGen" class="primary" style="padding:12px 30px;font-size:15px;font-weight:700">⚙ 生成 YAML</button>
+    <button id="btnScriptDl" disabled>下载 mihomoScript.synced.yaml</button>
+    <span class="task-status" id="coreStat" style="margin-left:auto">尚未生成</span>
+  </div>
+
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px;background:#0b1018;border:1px dashed var(--border);border-radius:8px;padding:10px 12px">
+    <span style="color:var(--muted);font-size:12px">mihomo 客户端订阅地址（填进客户端，点「更新」即自动重新生成最新配置）：</span>
+    <code id="subUrl" style="font-family:var(--mono);font-size:13px;color:var(--accent);word-break:break-all"></code>
+    <button id="btnCopySub" style="padding:2px 10px;font-size:11px">复制</button>
+    <span class="task-status" id="copySubMsg"></span>
+  </div>
+
+  <div class="cards" style="margin-top:16px;margin-bottom:0">
+    <div class="card">
+      <div class="label">上游脚本 SHA-1</div>
+      <div id="stScriptSha" class="value">—</div>
+    </div>
+    <div class="card">
+      <div class="label">上次生成时间</div>
+      <div id="stScriptTime" class="value">—</div>
+    </div>
+    <div class="card">
+      <div class="label">产物 mihomoScript.synced.yaml</div>
+      <div id="stScriptOut" class="value">—</div>
+    </div>
+    <div class="card">
+      <div class="label">生成开关</div>
+      <div id="stScriptOpt" class="value">—</div>
+    </div>
+  </div>
+
+  <h2 style="margin-top:16px">生成日志 <button id="btnClearScriptLog" style="padding:2px 10px;font-size:11px">清空</button></h2>
+  <pre id="scriptLog" style="margin-top:4px;max-height:220px">尚未生成配置。填入订阅链接后点「生成 YAML」。</pre>
+</div>
+
+<!-- ============ 高级设置（折叠） ============ -->
+<details class="advanced">
+  <summary>高级设置<span class="hint">YAML 版同步 · 补丁 · 定时任务 · 脚本版开关 · 节点标注</span></summary>
+
+  <div style="margin-top:14px">
+    <!-- YAML 版 -->
+    <h2 style="font-size:14px;font-weight:600;margin:6px 0 12px">YAML 版（Config/mihomoConfig.yaml 同步 + 补丁）</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="label">上游 SHA-1（上次同步）</div>
+        <div id="stUpstream" class="value">—</div>
+      </div>
+      <div class="card">
+        <div class="label">上游更新时间（GitHub）</div>
+        <div id="stUpstreamTime" class="value">—</div>
+      </div>
+      <div class="card">
+        <div class="label">上次同步时间</div>
+        <div id="stSyncTime" class="value">—</div>
+      </div>
+      <div class="card">
+        <div class="label">产物 mihomoConfig.synced.yaml</div>
+        <div id="stOutput" class="value">—</div>
+      </div>
+      <div class="card">
+        <div class="label">定时任务（每周日 09:00）</div>
+        <div id="stTask" class="value">—</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button id="btnSync" class="primary">⟳ 全部同步</button>
+      <button id="btnRefresh">刷新状态</button>
+      <button id="btnDownload" disabled>下载产物</button>
+      <span class="task-status" id="taskStatus"></span>
+      <span style="flex:1"></span>
+      <button id="btnTask" class="danger" disabled style="display:none"></button>
+    </div>
+
+    <div class="panel" style="margin-top:14px">
+      <h2>补丁设置<span class="hint">在此填写订阅链接等配置 · 状态存 settings.json</span></h2>
+      <div id="patchList"></div>
+    </div>
+
+    <div class="cols">
+      <div class="panel">
+        <h2>同步日志 <button id="btnClearLog" style="padding:2px 10px;font-size:11px">清空</button></h2>
+        <pre id="log">尚未执行同步</pre>
+      </div>
+      <div class="panel">
+        <h2>差异预览<span class="hint">上游最新 vs 上次产物 · 绿=新增 红=删除</span></h2>
+        <div class="diff" id="diff"><div class="empty">点击「全部同步」前可先查看差异</div></div>
+      </div>
+    </div>
+
+    <!-- 脚本版高级 -->
+    <h2 style="font-size:14px;font-weight:600;margin:20px 0 12px">脚本版（动态生成）高级设置</h2>
+    <div class="toolbar">
+      <button id="btnScriptSync" class="primary">⬇ 下载上游脚本</button>
+      <button id="btnScriptGen" disabled>⚙ 生成脚本版配置</button>
+      <span class="task-status" id="scriptMsg"></span>
+    </div>
+    <div id="scriptOptions"></div>
+    <div id="scriptSubs" style="margin-top:14px"></div>
+    <div id="scriptNodeRegion" style="margin-top:14px"></div>
+    <div id="scriptNodeSel" style="margin-top:14px"></div>
+  </div>
+</details>
+
+<footer>
+  本地服务 · 零外部依赖 · 数据仅在本机流转 · 关闭本窗口即停止服务
+</footer>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+function fmtTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+function fmtSize(n) {
+  if (n === null || n === undefined) return "—";
+  return (n / 1024).toFixed(1) + " KB";
+}
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+// 用于把任意文本拼进元素 id（CSS.escape 的简单替代）
+function cssEscape(s) {
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "_" + c.charCodeAt(0).toString(16));
+}
+
+// ---------- 状态（YAML 版） ----------
+async function refreshStatus() {
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+
+    $("stUpstream").textContent = s.upstreamSha ? s.upstreamSha.slice(0, 12) + "…" : "尚未同步过";
+    $("stUpstream").className = "value " + (s.upstreamOk ? "ok" : "err");
+    $("stUpstreamTime").textContent = fmtTime(s.upstreamTime);
+    $("stUpstreamTime").className = "value " + (s.upstreamTime ? "ok" : "warn");
+    $("stSyncTime").textContent = fmtTime(s.lastSyncTime);
+    $("stOutput").textContent = s.outputExists ? fmtSize(s.outputSize) : "尚无产物";
+    $("stOutput").className = "value " + (s.outputExists ? "ok" : "err");
+
+    const taskEl = $("stTask");
+    if (s.taskRegistered === null) {
+      taskEl.textContent = "无法检测";
+      taskEl.className = "value err";
+    } else {
+      taskEl.textContent = s.taskRegistered ? "已启用" : "未启用";
+      taskEl.className = "value " + (s.taskRegistered ? "ok" : "warn");
+    }
+
+    const badge = $("stateBadge");
+    if (!badge.textContent.includes("生成") && !badge.textContent.includes("同步")) {
+      badge.textContent = s.running ? "同步中…" : "空闲";
+    }
+    badge.className = "badge " + (s.running ? "running" : "idle");
+    $("btnSync").disabled = s.running;
+    $("btnDownload").disabled = !s.outputExists || s.running;
+
+    // 定时任务按钮
+    const btnTask = $("btnTask");
+    if (s.taskRegistered === null) {
+      btnTask.style.display = "none";
+      $("taskStatus").textContent = "schtasks 不可用，无法管理定时任务";
+    } else {
+      btnTask.style.display = "";
+      btnTask.disabled = s.running;
+      btnTask.textContent = s.taskRegistered ? "停用定时任务" : "启用定时任务";
+      btnTask.className = "danger" + (s.taskRegistered ? " danger" : "");
+      $("taskStatus").textContent = "";
+    }
+  } catch {
+    $("stUpstream").textContent = "服务未连接";
+  }
+}
+
+// ---------- 全部同步（YAML + 脚本版） ----------
+async function doSync() {
+  $("btnSync").disabled = true;
+  try {
+    const r = await fetch("/api/sync", { method: "POST" });
+    const data = await r.json();
+    if (!r.ok) appendLog("错误：" + (data.error || r.status), "err");
+    if (data.ok) appendLog("同步成功" + (data.changed ? "" : "（无变化）"), "ok");
+    // 脚本版结果（全部同步时一并返回）
+    if (data.script) {
+      if (data.script.ok) {
+        appendScriptLog(
+          `✓ 脚本版已同步：${data.script.proxies} 节点 / ${data.script.groups} 策略组 / ${data.script.rules} 规则${data.script.changed ? "" : "（无变化）"}`,
+        );
+      } else {
+        appendScriptLog("脚本版同步失败：" + (data.script.error || ""), true);
+      }
+    }
+    await Promise.all([refreshStatus(), refreshScriptStatus(), loadLog(), loadScriptLog()]);
+  } catch (e) {
+    appendLog("同步失败：" + e.message, "err");
+  } finally {
+    $("btnSync").disabled = false;
+  }
+}
+
+// ---------- 日志（YAML 版） ----------
+function appendLog(text, cls) {
+  const el = $("log");
+  if (el.textContent === "尚未执行同步") el.textContent = "";
+  el.textContent += "\n" + text; // 简化：不再单独渲染时间戳
+  el.scrollTop = el.scrollHeight;
+}
+async function loadLog() {
+  try {
+    const r = await fetch("/api/log");
+    const d = await r.json();
+    if (!d.lines || d.lines.length === 0) return;
+    const el = $("log");
+    el.textContent = d.lines.join("\n");
+    el.scrollTop = el.scrollHeight;
+  } catch {}
+}
+
+// ---------- 差异 ----------
+async function loadDiff() {
+  const el = $("diff");
+  try {
+    const r = await fetch("/api/diff");
+    const d = await r.json();
+    if (d.error) {
+      el.innerHTML = `<div class="empty">${escapeHtml(d.error)}</div>`;
+      return;
+    }
+    if (!d.ops.length) {
+      el.innerHTML = `<div class="empty">无差异</div>`;
+      return;
+    }
+    const html = [];
+    let ln = 0;
+    for (const op of d.ops) {
+      ln++;
+      const mark = op.type === "add" ? "+" : op.type === "del" ? "−" : " ";
+      html.push(
+        `<div class="line ${op.type}"><span class="ln">${ln}</span><span class="mark">${mark}</span><span>${escapeHtml(op.text) || " "}</span></div>`,
+      );
+      if (ln > 3000) {
+        html.push(`<div class="empty">…差异过大，仅显示前 3000 行</div>`);
+        break;
+      }
+    }
+    el.innerHTML = html.join("");
+  } catch {
+    el.innerHTML = `<div class="empty">加载差异失败</div>`;
+  }
+}
+
+// ---------- 补丁设置 ----------
+async function loadSettings() {
+  const list = $("patchList");
+  try {
+    const r = await fetch("/api/settings");
+    const d = await r.json();
+    const enabled = (d.settings && d.settings.enabled) || {};
+    if (!d.patches || d.patches.length === 0) {
+      list.innerHTML = `<div class="empty">patches.js 中还没有补丁</div>`;
+      return;
+    }
+    list.innerHTML = d.patches
+      .map((p) => {
+        const inputs = (p.vars || [])
+          .map((v) => {
+            const cur = d.settings[v.key] !== undefined ? d.settings[v.key] : v.default || "";
+            return `
+              <label class="var-label" style="display:block;font-size:11px;color:var(--muted);margin-top:8px">
+                ${escapeHtml(v.label)}
+                <input class="var-input" type="text" data-key="${escapeHtml(v.key)}"
+                  value="${escapeHtml(cur)}" placeholder="在上方填入 ${escapeHtml(v.label)}">
+                <span class="var-saved">✓ 已保存</span>
+              </label>`;
+          })
+          .join("");
+        return `
+        <div class="switch-row">
+          <div style="flex:1">
+            <span class="desc">${escapeHtml(p.desc)}<small>id: ${escapeHtml(p.id)}</small>${inputs}</span>
+          </div>
+          <label class="switch">
+            <input type="checkbox" data-id="${escapeHtml(p.id)}" ${enabled[p.id] === false || p.enabled === false ? "" : "checked"}>
+            <span class="slider"></span>
+          </label>
+        </div>`;
+      })
+      .join("");
+    list.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+      cb.addEventListener("change", () => saveSetting(cb));
+    });
+    list.querySelectorAll(".var-input").forEach((inp) => {
+      inp.addEventListener("change", () => saveVar(inp));
+    });
+  } catch {
+    list.innerHTML = `<div class="empty">加载补丁设置失败</div>`;
+  }
+}
+async function saveSetting(cb) {
+  try {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: { [cb.dataset.id]: cb.checked } }),
+    });
+    appendLog(`补丁「${cb.dataset.id}」已${cb.checked ? "启用" : "停用"}`, "ok");
+  } catch {
+    cb.checked = !cb.checked;
+    appendLog("保存补丁设置失败", "err");
+  }
+}
+async function saveVar(inp) {
+  const saved = inp.closest("label").querySelector(".var-saved");
+  try {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: { [inp.dataset.key]: inp.value.trim() } }),
+    });
+    if (saved) {
+      saved.classList.add("show");
+      setTimeout(() => saved.classList.remove("show"), 1600);
+    }
+  } catch {
+    appendLog("保存「" + inp.dataset.key + "」失败", "err");
+  }
+}
+
+// ---------- 脚本版（动态生成） ----------
+const scriptGroups = ["基础策略", "分流策略", "生成配置"];
+
+async function refreshScriptStatus() {
+  try {
+    const r = await fetch("/api/script/status");
+    const s = await r.json();
+
+    $("stScriptSha").textContent = s.scriptDownloaded ? (s.scriptSha || "?").slice(0, 12) + "…" : "未下载";
+    $("stScriptSha").className = "value " + (s.scriptDownloaded ? "ok" : "err");
+    $("stScriptTime").textContent = fmtTime(s.scriptTime);
+    $("stScriptOut").textContent = s.output && s.output.exists ? fmtSize(s.output.size) : "未生成";
+    $("stScriptOut").className = "value " + (s.output && s.output.exists ? "ok" : "err");
+    $("stScriptOpt").textContent = s.options ? s.options.length + " 项" : "—";
+
+    $("btnScriptSync").disabled = s.busy;
+    $("btnScriptGen").disabled = !s.scriptDownloaded || s.busy;
+    $("btnScriptDl").disabled = !s.output || !s.output.exists || s.busy;
+    $("btnCoreGen").disabled = s.busy;
+
+    if (s.options) renderScriptOptions(s.options);
+  } catch {
+    $("stScriptSha").textContent = "服务未连接";
+  }
+}
+
+function renderScriptOptions(options) {
+  const wrap = $("scriptOptions");
+  let html = "";
+  flowGroups.length = 0; // 重建分流组名列表（保持脚本内顺序）
+  for (const g of scriptGroups) {
+    const items = options.filter((o) => o.group === g);
+    if (!items.length) continue;
+    if (g === "分流策略") {
+      for (const o of items) flowGroups.push(o.key);
+    }
+    html += `<div style="font-size:12px;color:var(--muted);margin:10px 0 4px">— ${escapeHtml(g)} —</div>`;
+    for (const o of items) {
+      html += `
+      <div class="switch-row">
+        <span class="desc">${escapeHtml(o.key)}<small>${escapeHtml(o.label)}</small></span>
+        <label class="switch">
+          <input type="checkbox" data-optkey="${escapeHtml(o.key)}" ${o.value ? "checked" : ""}>
+          <span class="slider"></span>
+        </label>
+      </div>`;
+    }
+  }
+  if (!html) html = `<div class="empty">先「下载上游脚本」以加载开关</div>`;
+  wrap.innerHTML = html;
+  wrap.querySelectorAll("input[data-optkey]").forEach((cb) => {
+    cb.addEventListener("change", () => saveScriptOption(cb));
+  });
+  renderScriptNodeSel();
+}
+
+async function saveScriptOption(cb) {
+  try {
+    await fetch("/api/script/options", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [cb.dataset.optkey]: cb.checked }),
+    });
+    appendScriptLog(`开关「${cb.dataset.optkey}」已${cb.checked ? "开启" : "关闭"}`);
+  } catch {
+    cb.checked = !cb.checked;
+    appendScriptLog("保存开关失败", true);
+  }
+}
+
+// ---------- 订阅管理（多订阅） ----------
+let subUrls = []; // 页面编辑中的 URL 列表
+let subSaved = []; // 服务端已保存的列表
+
+async function refreshScriptSubs() {
+  try {
+    const r = await fetch("/api/script/nodes");
+    const d = await r.json();
+    subSaved = Array.isArray(d.urls) ? d.urls : [];
+    subUrls = [...subSaved];
+    renderScriptSubs();
+    // 核心面板订阅框同步当前第一个订阅
+    const core = $("coreSubInput");
+    if (core) core.value = subSaved[0] || "";
+  } catch {
+    subSaved = [];
+    subUrls = [];
+    renderScriptSubs();
+  }
+}
+
+function renderScriptSubs() {
+  const wrap = $("scriptSubs");
+  const placeholder = escapeHtml("https://机场.com/sub/xxxx/mihomo-nodes.yaml");
+  let html = `<div style="font-size:13px;font-weight:600;margin:4px 0 8px">订阅管理
+    <span class="hint">多个订阅的节点合并用于脚本版生成 · 第一个同步给 YAML 版补丁</span></div>`;
+  subUrls.forEach((u, i) => {
+    html += `
+    <div class="switch-row">
+      <input class="var-input" type="text" data-subidx="${i}" value="${escapeHtml(u)}"
+        placeholder="${placeholder}" style="flex:1">
+      <button data-subdel="${i}" style="margin-left:8px;padding:2px 10px;font-size:11px">删除</button>
+    </div>`;
+  });
+  html += `
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <button id="btnSubAdd" style="padding:4px 14px;font-size:12px">+ 添加订阅</button>
+    <button id="btnSubSave" class="primary" style="padding:4px 14px;font-size:12px">保存</button>
+    <span class="task-status" id="subMsg" style="align-self:center"></span>
+  </div>`;
+  wrap.innerHTML = html;
+  $("btnSubAdd").addEventListener("click", () => { subUrls.push(""); renderScriptSubs(); });
+  $("btnSubSave").addEventListener("click", saveScriptSubs);
+  wrap.querySelectorAll("input[data-subidx]").forEach((inp) => {
+    inp.addEventListener("input", () => { subUrls[Number(inp.dataset.subidx)] = inp.value; });
+  });
+  wrap.querySelectorAll("button[data-subdel]").forEach((btn) => {
+    btn.addEventListener("click", () => { subUrls.splice(Number(btn.dataset.subdel), 1); renderScriptSubs(); });
+  });
+}
+
+async function saveScriptSubs() {
+  const urls = subUrls.map((u) => (u || "").trim()).filter(Boolean);
+  const msg = $("subMsg");
+  try {
+    const r = await fetch("/api/script/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "保存失败");
+    subSaved = [...urls];
+    appendScriptLog(`已保存 ${urls.length} 个订阅链接`);
+    if (msg) msg.textContent = "已保存 ✓";
+    await refreshScriptNodes(); // 节点列表按新订阅重新加载
+  } catch (e) {
+    appendScriptLog("保存订阅失败：" + (e.message || ""), true);
+    if (msg) msg.textContent = "保存失败";
+  }
+}
+
+// ---------- 核心面板：保存订阅（单条，与多订阅管理互通） ----------
+async function saveCoreSub() {
+  const inp = $("coreSubInput");
+  const msg = $("coreSubMsg");
+  const val = (inp.value || "").trim();
+  if (!val) {
+    msg.textContent = "请填写订阅链接";
+    return;
+  }
+  msg.textContent = "保存中…";
+  try {
+    const r = await fetch("/api/script/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls: [val] }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "保存失败");
+    subSaved = [val];
+    subUrls = [val];
+    renderScriptSubs();
+    msg.textContent = "已保存 ✓";
+    await refreshScriptNodes();
+  } catch (e) {
+    msg.textContent = "保存失败：" + (e.message || "");
+  }
+}
+
+// ---------- 核心面板：一键生成（自动补下载上游脚本） ----------
+async function doCoreGen() {
+  const btn = $("btnCoreGen");
+  const badge = $("stateBadge");
+  const stat = $("coreStat");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    badge.textContent = "生成中…";
+    badge.className = "badge running";
+
+    // 上游脚本未下载时自动先下载（首次使用免去手动步骤）
+    const st = await (await fetch("/api/script/status")).json();
+    if (!st.scriptDownloaded) {
+      appendScriptLog("未下载上游脚本，自动下载中…");
+      const r = await fetch("/api/script/sync", { method: "POST" });
+      const d = await r.json();
+      if (!d.ok) {
+        appendScriptLog("下载上游脚本失败：" + (d.error || ""), true);
+        refreshScriptStatus();
+        return;
+      }
+    }
+
+    const r = await fetch("/api/script/generate", { method: "POST" });
+    const d = await r.json();
+    if (d.ok) {
+      appendScriptLog(`✓ 生成成功：${d.proxies} 节点 / ${d.groups} 策略组 / ${d.rules} 规则${d.changed ? "" : "（无变化）"}`);
+      if (d.replacedGroups && d.replacedGroups.length) {
+        appendScriptLog("已应用节点勾选：" + d.replacedGroups.join("、"));
+      }
+      stat.textContent = `${d.proxies} 节点 · ${d.groups} 策略组 · ${d.rules} 规则 · ${d.changed ? "已更新" : "无变化"} · ${fmtTime(d.time)}`;
+      syncNodesAfterGenerate(d);
+    } else {
+      appendScriptLog("生成失败：" + (d.error || ""), true);
+      stat.textContent = "生成失败";
+    }
+    refreshScriptStatus();
+    await loadScriptLog();
+  } catch (e) {
+    appendScriptLog("生成异常：" + e.message, true);
+  } finally {
+    btn.disabled = false;
+    refreshScriptStatus();
+    badge.textContent = "空闲";
+    badge.className = "badge idle";
+  }
+}
+
+// ---------- 分流组节点选择 ----------
+const flowGroups = []; // 分流策略组名（来自开关渲染，保持脚本顺序）
+let nodeSelState = { nodes: [], selection: {}, regions: {}, regionList: [], error: null };
+let nodeSelLoaded = false;
+let nodeSelOpenGroup = null;
+
+async function refreshScriptNodes() {
+  try {
+    const r = await fetch("/api/script/nodes");
+    const d = await r.json();
+    nodeSelState = {
+      nodes: Array.isArray(d.nodes) ? d.nodes : [],
+      selection: d.selection && typeof d.selection === "object" ? d.selection : {},
+      regions: d.regions && typeof d.regions === "object" ? d.regions : {},
+      regionList: Array.isArray(d.regionList) ? d.regionList : [],
+      error: d.error || null,
+    };
+    nodeSelLoaded = true;
+    renderScriptNodeRegion();
+    renderScriptNodeSel();
+  } catch {
+    nodeSelState.error = "无法连接服务";
+    nodeSelLoaded = true;
+    renderScriptNodeRegion();
+    renderScriptNodeSel();
+  }
+}
+
+// ---------- 节点归属地标注 ----------
+let regionEditBusy = false;
+
+// 去掉节点名里的国旗前缀，还原为订阅原名（用于归属地映射的 key）
+function stripFlag(name, regionList) {
+  for (const { flag } of regionList || []) {
+    if (flag && String(name).startsWith(flag + " ")) {
+      return String(name).slice(flag.length + 1);
+    }
+  }
+  return name;
+}
+
+function renderScriptNodeRegion() {
+  const wrap = $("scriptNodeRegion");
+  const regionList = nodeSelState.regionList || [];
+  let html = `<div style="font-size:13px;font-weight:600;margin:4px 0 8px">节点归属地标注
+    <span class="hint">标注后生成时节点归入对应地区策略组（如 🇺🇸 美国），不标的进「其他节点」</span>
+    <button id="btnScriptRegionRefresh" style="padding:2px 10px;font-size:11px;float:right">刷新节点</button></div>`;
+  if (!nodeSelLoaded) {
+    html += `<div class="empty">正在加载订阅节点…</div>`;
+  } else if (nodeSelState.error) {
+    html += `<div class="empty" style="color:var(--err)">节点加载失败：${escapeHtml(nodeSelState.error)}（请确认「补丁设置」里的订阅链接有效）</div>`;
+  } else if (nodeSelState.nodes.length === 0) {
+    html += `<div class="empty">订阅中暂无节点</div>`;
+  } else {
+    const cur = nodeSelState.regions || {};
+    const regionOpts = `<option value="">未标注</option>` + regionList
+      .map((r) => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.flag)} ${escapeHtml(r.name)}</option>`)
+      .join("");
+    for (const n of nodeSelState.nodes) {
+      const original = stripFlag(n, regionList);
+      const val = cur[original] || "";
+      html += `
+      <div class="switch-row">
+        <span class="desc" style="word-break:break-all">${escapeHtml(n)}<small>${val ? "已标注：" + escapeHtml(val) : "未标注 → 归入「其他节点」"}</small></span>
+        <select data-region="${escapeHtml(original)}" style="max-width:130px">
+          ${regionOpts.replace(`<option value="${escapeHtml(val)}">`, `<option value="${escapeHtml(val)}" selected>`)}
+        </select>
+      </div>`;
+    }
+    html += `<div style="font-size:12px;color:var(--muted);margin-top:6px">提示：标注结果下次点「生成 YAML」时生效</div>`;
+  }
+  wrap.innerHTML = html;
+  const btn = $("btnScriptRegionRefresh");
+  if (btn) btn.addEventListener("click", refreshScriptNodes);
+  wrap.querySelectorAll("select[data-region]").forEach((sel) => {
+    sel.addEventListener("change", () => saveScriptNodeRegion(sel.dataset.region, sel));
+  });
+}
+
+async function saveScriptNodeRegion(original, select) {
+  const prev = select.value;
+  if (regionEditBusy) { select.value = prev; return; }
+  regionEditBusy = true;
+  const next = { ...(nodeSelState.regions || {}) };
+  if (select.value) next[original] = select.value;
+  else delete next[original];
+  try {
+    const r = await fetch("/api/script/regions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "保存失败");
+    appendScriptLog(`节点归属地已更新（${select.value ? original + " → " + select.value : original + " 已取消标注"}）`);
+    await refreshScriptNodes(); // 节点名变为带国旗，勾选区自动同步
+  } catch (e) {
+    select.value = prev;
+    appendScriptLog("保存归属地失败：" + (e.message || ""), true);
+  } finally {
+    regionEditBusy = false;
+  }
+}
+
+function renderScriptNodeSel() {
+  const wrap = $("scriptNodeSel");
+  const groupList = flowGroups.filter((g) => nodeSelState.selection[g] && nodeSelState.selection[g].length);
+  let html = `<div style="font-size:13px;font-weight:600;margin:4px 0 8px">分流组节点选择
+    <span class="hint">勾选订阅节点后替换到对应分流策略组（不勾选则用默认策略组列表）· 已勾选节点支持拖动排序</span>
+    <button id="btnScriptNodeRefresh" style="padding:2px 10px;font-size:11px;float:right">刷新节点</button></div>`;
+  if (!nodeSelLoaded) {
+    html += `<div class="empty">正在加载订阅节点…</div>`;
+  } else if (nodeSelState.error) {
+    html += `<div class="empty" style="color:var(--err)">节点加载失败：${escapeHtml(nodeSelState.error)}（请确认「补丁设置」里的订阅链接有效）</div>`;
+  } else if (nodeSelState.nodes.length === 0) {
+    html += `<div class="empty">订阅中暂无节点</div>`;
+  } else {
+    for (const g of flowGroups) {
+      const count = (nodeSelState.selection[g] || []).length;
+      const open = nodeSelOpenGroup === g ? "1" : "";
+      const openAttr = nodeSelOpenGroup === g ? "" : "closed";
+      html += `
+      <div style="margin:6px 0">
+        <div class="switch-row" data-group="${escapeHtml(g)}" role="button" tabindex="0"
+             style="cursor:pointer;user-select:none" title="点击展开/收起节点勾选">
+          <span class="desc">${escapeHtml(g)}<small>${count > 0 ? `已勾选 ${count} 个节点` : "未勾选（用默认策略组列表）"}</small></span>
+          <span style="font-size:11px;color:var(--muted)">${count > 0 ? "●" : "○"} ${open ? "▲" : "▼"}</span>
+        </div>
+        <div id="group-${cssEscape(g)}" class="node-group" ${openAttr}></div>
+      </div>`;
+    }
+    html += `<div style="font-size:12px;color:var(--muted);margin-top:6px">提示：勾选结果下次点「生成 YAML」时生效</div>`;
+  }
+  wrap.innerHTML = html;
+
+  const btn = $("btnScriptNodeRefresh");
+  if (btn) btn.addEventListener("click", refreshScriptNodes);
+  wrap.querySelectorAll("[data-group]").forEach((row) => {
+    row.addEventListener("click", () => toggleScriptNodeGroup(row.dataset.group));
+  });
+  for (const g of flowGroups) renderScriptNodeGroup(g);
+}
+
+function renderScriptNodeGroup(g) {
+  const box = $("group-" + cssEscape(g));
+  if (!box) return;
+  if (nodeSelOpenGroup !== g) {
+    box.innerHTML = "";
+    return;
+  }
+  const selected = nodeSelState.selection[g] || [];
+  const selectedSet = new Set(selected);
+  let html = `<div style="padding:4px 0 6px 14px">`;
+
+  // 已勾选节点：可拖动排序（顺序即生成时策略组的节点顺序）
+  html += `<div style="font-size:12px;color:var(--muted);margin:4px 0 6px">已勾选节点（拖动调整顺序）</div>`;
+  if (selected.length === 0) {
+    html += `<div class="empty" style="padding:4px 0 8px;text-align:left;font-size:12px">尚未勾选，从下方列表勾选节点</div>`;
+  } else {
+    html += `<div id="sel-${cssEscape(g)}" class="sel-sort">`;
+    for (const n of selected) {
+      html += `
+      <div class="sel-item" draggable="true" data-sel="${escapeHtml(n)}" title="拖动排序">
+        <span class="sel-grip">⠿</span>
+        <span style="flex:1;word-break:break-all">${escapeHtml(n)}</span>
+        <span class="sel-x" data-selremove="${escapeHtml(n)}" title="取消勾选">✕</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // 全部节点：勾选 / 取消勾选
+  html += `<div style="font-size:12px;color:var(--muted);margin:8px 0 4px">全部节点</div>`;
+  for (const n of nodeSelState.nodes) {
+    html += `
+    <label style="display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;font-size:13px">
+      <input type="checkbox" data-node="${escapeHtml(n)}" ${selectedSet.has(n) ? "checked" : ""}>
+      <span style="word-break:break-all">${escapeHtml(n)}</span>
+    </label>`;
+  }
+  html += `</div>`;
+  box.innerHTML = html;
+
+  box.querySelectorAll("input[data-node]").forEach((cb) => {
+    cb.addEventListener("change", () => saveScriptNodeSelection(g, cb));
+  });
+  box.querySelectorAll("[data-selremove]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const list = selected.filter((n) => n !== btn.dataset.selremove);
+      saveScriptSelection(g, list, `「${g}」已取消勾选 ${btn.dataset.selremove}`);
+    });
+  });
+  bindSelSort(g);
+}
+
+// 已勾选节点拖动排序（原生 HTML5 DnD，零依赖）
+function bindSelSort(g) {
+  const wrap = $("sel-" + cssEscape(g));
+  if (!wrap) return;
+  let dragEl = null;
+  wrap.addEventListener("dragover", (e) => {
+    e.preventDefault(); // 允许在容器内放置
+    e.dataTransfer.dropEffect = "move";
+  });
+  wrap.querySelectorAll(".sel-item").forEach((item) => {
+    item.addEventListener("dragstart", (e) => {
+      dragEl = item;
+      item.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", item.dataset.sel); } catch {}
+    });
+    item.addEventListener("dragover", (e) => {
+      if (!dragEl || dragEl === item) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const rect = item.getBoundingClientRect();
+      if (e.clientY > rect.top + rect.height / 2) {
+        if (item.nextElementSibling !== dragEl) wrap.insertBefore(dragEl, item.nextElementSibling);
+      } else {
+        if (item.previousElementSibling !== dragEl) wrap.insertBefore(dragEl, item);
+      }
+    });
+    item.addEventListener("drop", (e) => e.preventDefault());
+    item.addEventListener("dragend", () => {
+      item.classList.remove("dragging");
+      dragEl = null;
+      saveSortedSelection(g);
+    });
+  });
+}
+
+// 拖动结束：把当前 DOM 顺序保存为勾选顺序
+function saveSortedSelection(g) {
+  const wrap = $("sel-" + cssEscape(g));
+  if (!wrap) return;
+  const order = Array.from(wrap.querySelectorAll(".sel-item")).map((el) => el.dataset.sel);
+  const cur = nodeSelState.selection[g] || [];
+  if (order.length === cur.length && order.every((n, i) => n === cur[i])) return;
+  saveScriptSelection(g, order, `「${g}」节点顺序已更新`);
+}
+
+// 保存某个分流组的勾选 / 排序结果（list 为按顺序的节点名数组）
+async function saveScriptSelection(g, list, logText) {
+  try {
+    const r = await fetch("/api/script/nodes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [g]: list }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "保存失败");
+    nodeSelState.selection = d.selection || {};
+    renderScriptNodeSel();
+    if (logText) appendScriptLog(logText);
+  } catch (e) {
+    renderScriptNodeSel();
+    appendScriptLog("保存失败：" + (e.message || ""), true);
+  }
+}
+
+function saveScriptNodeSelection(g, cb) {
+  const list = (nodeSelState.selection[g] || []).filter((n) => n !== cb.dataset.node);
+  if (cb.checked) list.push(cb.dataset.node);
+  saveScriptSelection(g, list, `「${g}」已勾选 ${list.length} 个节点`);
+}
+
+function toggleScriptNodeGroup(g) {
+  nodeSelOpenGroup = nodeSelOpenGroup === g ? null : g;
+  renderScriptNodeSel();
+}
+
+// 生成成功后用返回的节点列表刷新勾选界面
+function syncNodesAfterGenerate(d) {
+  if (d && Array.isArray(d.nodes)) {
+    nodeSelState.nodes = d.nodes;
+    nodeSelState.error = null;
+    nodeSelLoaded = true;
+    renderScriptNodeSel();
+  }
+}
+
+function appendScriptLog(text, isErr) {
+  const el = $("scriptLog");
+  if (el.dataset.initial === undefined) {
+    el.dataset.initial = "1";
+    el.textContent = "";
+  }
+  el.textContent += (el.textContent ? "\n" : "") + text;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function loadScriptLog() {
+  try {
+    const r = await fetch("/api/script/log");
+    const d = await r.json();
+    if (d.lines && d.lines.length) {
+      const el = $("scriptLog");
+      el.dataset.initial = "1";
+      el.textContent = d.lines.join("\n");
+      el.scrollTop = el.scrollHeight;
+    }
+  } catch {}
+}
+
+async function doScriptSync() {
+  $("btnScriptSync").disabled = true;
+  try {
+    const r = await fetch("/api/script/sync", { method: "POST" });
+    const d = await r.json();
+    appendScriptLog(d.ok ? "✓ 上游脚本已下载（SHA " + (d.sha || "").slice(0, 12) + "）" : "下载失败：" + (d.error || ""));
+    if (d.ok) refreshScriptStatus();
+    await loadScriptLog();
+  } catch (e) {
+    appendScriptLog("下载脚本异常：" + e.message, true);
+  } finally {
+    $("btnScriptSync").disabled = false;
+  }
+}
+
+async function doScriptGen() {
+  $("btnScriptGen").disabled = true;
+  $("btnScriptSync").disabled = true;
+  try {
+    const r = await fetch("/api/script/generate", { method: "POST" });
+    const d = await r.json();
+    if (d.ok) {
+      appendScriptLog(`✓ 生成成功：${d.proxies} 节点 / ${d.groups} 策略组 / ${d.rules} 规则${d.changed ? "" : "（无变化）"}${d.replacedGroups && d.replacedGroups.length ? "｜已应用勾选：" + d.replacedGroups.join("、") : ""}`);
+      syncNodesAfterGenerate(d);
+    } else {
+      appendScriptLog("生成失败：" + (d.error || ""));
+    }
+    refreshScriptStatus();
+    await loadScriptLog();
+  } catch (e) {
+    appendScriptLog("生成异常：" + e.message, true);
+  } finally {
+    $("btnScriptGen").disabled = false;
+    $("btnScriptSync").disabled = false;
+  }
+}
+
+// ---------- 产物 ----------
+async function downloadOutput() {
+  const r = await fetch("/api/output");
+  if (!r.ok) return;
+  const blob = await r.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "mihomoConfig.synced.yaml";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------- 定时任务 ----------
+async function toggleTask() {
+  const btn = $("btnTask");
+  const willEnable = btn.textContent.includes("启用");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/task", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: willEnable ? "install" : "uninstall" }),
+    });
+    const d = await r.json();
+    appendLog(d.message || d.error || "操作完成", r.ok ? "ok" : "err");
+  } catch (e) {
+    appendLog("定时任务操作失败：" + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    refreshStatus();
+  }
+}
+
+// ---------- 事件绑定 ----------
+// 客户端订阅地址（随实际访问的 host/端口生成）
+$("subUrl").textContent = location.origin + "/sub";
+$("btnCopySub").addEventListener("click", async () => {
+  const msg = $("copySubMsg");
+  try {
+    await navigator.clipboard.writeText($("subUrl").textContent);
+    msg.textContent = "已复制 ✓";
+  } catch {
+    msg.textContent = "复制失败，请手动选中复制";
+  }
+  setTimeout(() => { msg.textContent = ""; }, 2000);
+});
+$("btnCoreGen").addEventListener("click", doCoreGen);
+$("btnCoreSubSave").addEventListener("click", saveCoreSub);
+$("coreSubInput").addEventListener("keydown", (e) => { if (e.key === "Enter") saveCoreSub(); });
+$("btnSync").addEventListener("click", doSync);
+$("btnRefresh").addEventListener("click", () => { refreshStatus(); refreshScriptStatus(); loadDiff(); loadLog(); });
+$("btnClearLog").addEventListener("click", async () => {
+  $("log").textContent = "尚未执行同步";
+  try { await fetch("/api/log", { method: "POST" }); } catch {}
+});
+$("btnDownload").addEventListener("click", downloadOutput);
+$("btnTask").addEventListener("click", toggleTask);
+$("btnScriptSync").addEventListener("click", doScriptSync);
+$("btnScriptGen").addEventListener("click", doScriptGen);
+$("btnScriptDl").addEventListener("click", async () => {
+  const r = await fetch("/api/script/output");
+  if (!r.ok) return;
+  const blob = await r.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "mihomoScript.synced.yaml";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+$("btnClearScriptLog").addEventListener("click", async () => {
+  $("scriptLog").textContent = "尚未生成配置。填入订阅链接后点「生成 YAML」。";
+  try { await fetch("/api/script/log", { method: "POST" }); } catch {}
+});
+
+// 轮询：同步/生成中每 2 秒刷新，否则每 15 秒
+setInterval(() => { refreshStatus(); refreshScriptStatus(); if (!document.hidden) loadDiff(); }, 15000);
+setInterval(async () => {
+  const s = $("stateBadge");
+  if (s.textContent.includes("同步") || s.textContent.includes("生成")) { refreshStatus(); loadLog(); }
+  if (!$("btnScriptGen").disabled) { refreshScriptStatus(); loadScriptLog(); }
+}, 2000);
+
+// 初次加载
+refreshStatus();
+refreshScriptStatus();
+refreshScriptSubs();
+refreshScriptNodes();
+loadSettings();
+loadLog();
+loadDiff();
+loadScriptLog();
+</script>
+</body>
+</html>

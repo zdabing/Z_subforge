@@ -1,0 +1,19 @@
+# subforge 订阅配置生成服务
+# 使用：docker compose up -d（先修改下面 image 为你自己的 Docker Hub 地址）
+services:
+  subforge:
+    image: <你的DockerHub用户名>/subforge:latest
+    container_name: subforge
+    restart: unless-stopped
+    ports:
+      - "8790:8790"
+    volumes:
+      # 配置、快照、生成的 YAML 都持久化在这里，升级镜像不丢数据
+      - ./subforge-data:/data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8790
+      - DATA_DIR=/data
+      - TZ=Asia/Shanghai
+      # 可选：客户端显示的订阅名称（不设则按订阅域名自动推断）
+      # - SUB_TITLE=MyAirport

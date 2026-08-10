@@ -1,0 +1,21 @@
+# 依赖与构建产物
+node_modules
+npm-debug.log*
+
+# 版本控制
+.git
+.gitignore
+.github
+.zcode
+
+# 本地数据（含订阅 token 的 settings.json 严禁进入公开镜像）
+snapshot/
+script/
+settings.json
+*.synced.yaml
+
+# 本机专用文件
+*.cmd
+Dockerfile
+docker-compose.yml
+README.md

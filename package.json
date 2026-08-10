@@ -1,0 +1,12 @@
+{
+  "name": "subforge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "订阅 → mihomoScript.js → YAML 配置生成服务（可作 mihomo 客户端订阅源）",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}

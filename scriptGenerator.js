@@ -1,0 +1,706 @@
+#!/usr/bin/env node
+/**
+ * 脚本版（动态生成）：本地下载并执行上游 Script/mihomoScript.js，
+ * 按用户设置的开关（生成地区自动选择组 / 隐藏地区手动选择组 / 分流组添加所有节点 /
+ * 过滤高倍率节点 / 过滤非地区节点 / 屏蔽国外QUIC 等）动态生成配置，
+ * 输出 mihomoScript.synced.yaml。
+ *
+ * 上游脚本 main(config) 的输入契约：
+ *   - config.proxies（必须）：订阅解析出的节点数组
+ *   - config.dns / config.hosts（可选）：订阅自带，用于保留机场私有 DNS / 节点 hosts
+ *   其余（规则集、策略组、DNS、基础配置）全部由脚本自建。
+ *
+ * 依赖 js-yaml（package.json / node_modules）解析订阅并序列化产物。
+ */
+
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const crypto = require("crypto");
+
+const SCRIPT_URLS = [
+  "https://raw.githubusercontent.com/AIsouler/MyClash/main/Script/mihomoScript.js",
+  "https://cdn.jsdelivr.net/gh/AIsouler/MyClash@main/Script/mihomoScript.js",
+];
+const RETRY = 2;
+// 数据目录：容器里用环境变量指向挂载卷（/data），Windows 本地默认代码目录，行为不变
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const SCRIPT_DIR = path.join(DATA_DIR, "script");
+const SCRIPT_FILE = path.join(SCRIPT_DIR, "upstream-script.js");
+const SCRIPT_META = path.join(SCRIPT_DIR, "meta.json");
+const OUTPUT_FILE = path.join(DATA_DIR, "mihomoScript.synced.yaml");
+
+let yaml = null;
+try {
+  yaml = require("js-yaml");
+} catch (err) {
+  // 延迟到实际使用时再报错，保证非脚本版功能不受影响
+}
+
+const settingsSync = require("./sync.js");
+
+// 订阅解析缓存（订阅 URL 列表不变时 60s 内复用，避免反复下载）
+const SUB_CACHE_TTL = 60_000;
+let subCache = { time: 0, key: null, data: null };
+
+// 最近一次拉取订阅时捕获的元信息（HTTP 响应头），供 /sub 端点透传给 mihomo 客户端：
+// mihomo 客户端据此显示「流量/到期」等订阅信息
+let subInfo = { userinfo: null, updateInterval: null, title: null };
+
+let lastLog = { time: null, lines: [] };
+function log(...args) {
+  const msg = args.map((a) => (typeof a === "string" ? a : String(a))).join(" ");
+  console.log("[script]", msg);
+  if (lastLog.lines.length >= 300) lastLog.lines.shift();
+  lastLog.lines.push(msg);
+}
+
+/** 清空最近一次脚本操作日志（供页面「清空」按钮调用，避免刷新后旧日志又出现） */
+function clearLastLog() {
+  lastLog = { time: null, lines: [] };
+}
+
+function sha1(text) {
+  return crypto.createHash("sha1").update(text, "utf8").digest("hex");
+}
+
+// ---------- 下载 ----------
+
+async function fetchText(url) {
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: {
+      // 机场面板按 User-Agent 决定返回格式：带 clash/mihomo 才返回含 proxies 的 YAML，
+      // 否则返回 base64 或 HTML/JSON 提示页，导致解析不到 proxies 节点列表
+      "User-Agent": "clash-verge/v2.1.2 (mihomo)",
+      Accept: "application/yaml, text/yaml, application/x-yaml, text/plain, */*",
+    },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  const text = await res.text();
+  if (!text || !text.trim()) throw new Error("下载内容为空");
+  return text;
+}
+
+/** 拉取订阅并捕获元信息响应头（Subscription-Userinfo / Profile-Update-Interval），
+ *  供 /sub 端点透传给 mihomo 客户端显示流量、到期、更新间隔 */
+async function fetchSubText(url) {
+  const res = await fetch(url, {
+    redirect: "follow",
+    headers: {
+      "User-Agent": "clash-verge/v2.1.2 (mihomo)",
+      Accept: "application/yaml, text/yaml, application/x-yaml, text/plain, */*",
+    },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  const text = await res.text();
+  if (!text || !text.trim()) throw new Error("下载内容为空");
+  const userinfo = res.headers.get("subscription-userinfo");
+  const updateInterval = res.headers.get("profile-update-interval");
+  if (userinfo) subInfo.userinfo = userinfo;
+  if (updateInterval) subInfo.updateInterval = updateInterval;
+  // 机场显示名：优先取 SUB_TITLE 环境变量（容器部署可自定义，如 NAS 上设置 SUB_TITLE=MyAirport），
+  // 否则按订阅域名主名称推断（如 sub.nekocloud.host → nekocloud）
+  try {
+    const name = process.env.SUB_TITLE || new URL(url).hostname.replace(/^sub\./, "").split(".")[0];
+    if (name) subInfo.title = name;
+  } catch {}
+  return text;
+}
+
+/** 读取最近一次捕获的订阅元信息 */
+function getSubInfo() {
+  return subInfo;
+}
+
+/** 按顺序尝试各下载源，失败自动换源/重试；全部失败返回 null */
+async function download(urls) {
+  for (const url of urls) {
+    for (let attempt = 1; attempt <= RETRY; attempt++) {
+      try {
+        log(`下载 ${url}（第 ${attempt}/${RETRY} 次尝试）...`);
+        const text = await fetchText(url);
+        log("下载成功。");
+        return text;
+      } catch (err) {
+        if (attempt < RETRY) {
+          log(`失败：${err.message}，稍后重试...`);
+          await new Promise((r) => setTimeout(r, 1500));
+        } else {
+          log(`源 ${url} 失败：${err.message}`);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// ---------- 开关提取与注入 ----------
+
+const OPTIONS_DEF_RE = /const ruleOptionsEnable = \{([\s\S]*?)\n\};/;
+
+/** 从脚本源码提取 ruleOptionsEnable 默认值对象、每项注释说明与分组 */
+function extractOptions(source) {
+  const m = source.match(OPTIONS_DEF_RE);
+  if (!m) {
+    throw new Error("脚本中未找到 ruleOptionsEnable 定义，可能上游脚本已改版");
+  }
+  const literal = m[1];
+  let defaults;
+  try {
+    // 注意：literal 末尾一行是注释（无换行），拼接时必须补换行，否则结尾的 } 会被注释吞掉
+    defaults = new Function(`return {${literal}\n}`)();
+  } catch (err) {
+    throw new Error(`解析 ruleOptionsEnable 失败：${err.message}`);
+  }
+  // 逐行抓「键: 值, // 注释」与独立的分组注释行（如「// 基础策略组」）
+  const labels = {};
+  const groups = {};
+  // 上游注释分组 → 页面展示分组 的归一化映射
+  const GROUP_MAP = {
+    基础策略组: "基础策略",
+    以下为分流策略配置: "分流策略",
+    以下为非分流策略配置: "生成配置",
+  };
+  let currentGroup = "其他";
+  for (const line of literal.split("\n")) {
+    const section = line.match(/^\s*\/\/\s*(.+)$/);
+    if (section) {
+      const raw = section[1].trim();
+      currentGroup =
+        GROUP_MAP[raw] ||
+        raw.replace(/^以下为/, "").replace(/配置$/, "").replace(/组$/, "") ||
+        "其他";
+      continue;
+    }
+    const lm = line.match(/^\s*([A-Za-z\u4e00-\u9fa5]+):[^/]*?\/\/\s*(.+)$/);
+    if (lm) {
+      labels[lm[1].trim()] = lm[2].trim();
+      groups[lm[1].trim()] = currentGroup;
+    }
+  }
+  return { defaults, labels, groups };
+}
+
+/**
+ * 本地默认值覆盖：优先于上游脚本 ruleOptionsEnable 的默认值。
+ * 用户要求「屏蔽国外QUIC」默认关闭——即使上游脚本默认是 true，
+ * 且 settings.json 未保存该开关时，也按 false 处理。
+ */
+const DEFAULT_OVERRIDES = { 屏蔽国外QUIC: false };
+
+function defaultOf(key, upstreamDefault) {
+  return Object.prototype.hasOwnProperty.call(DEFAULT_OVERRIDES, key)
+    ? DEFAULT_OVERRIDES[key]
+    : upstreamDefault;
+}
+
+/**
+ * 注入用户开关：把源码中的 ruleOptionsEnable 定义替换为合并后的 JSON 字面量。
+ * 返回值：{ source, options }；source 为替换后的脚本源码。
+ */
+function injectOptions(source, userOptions) {
+  const { defaults } = extractOptions(source);
+  const merged = {};
+  for (const [key, val] of Object.entries(defaults)) {
+    merged[key] = typeof userOptions[key] === "boolean" ? userOptions[key] : defaultOf(key, val);
+  }
+  const replaced = source.replace(
+    OPTIONS_DEF_RE,
+    `const ruleOptionsEnable = ${JSON.stringify(merged, null, 2)};`,
+  );
+  if (replaced === source) {
+    throw new Error("注入开关失败：未替换到 ruleOptionsEnable 定义");
+  }
+  return { source: replaced, options: merged };
+}
+
+/** 执行脚本源码，返回 { main, defaults, labels } */
+function executeScript(source) {
+  const { defaults, labels } = extractOptions(source);
+  const code = source + "\n;module.exports = { main, ruleOptionsEnable };";
+  const factory = new Function(
+    "module",
+    "exports",
+    "require",
+    code,
+  );
+  const mod = { exports: {} };
+  factory(mod, mod.exports, (id) => {
+    throw new Error(`脚本不应在本地 require 外部模块：${id}`);
+  });
+  if (typeof mod.exports.main !== "function") {
+    throw new Error("脚本执行后未找到 main 函数");
+  }
+  return { main: mod.exports.main, defaults, labels };
+}
+
+// ---------- 快照读写 ----------
+
+function readScriptSource() {
+  try {
+    return fs.readFileSync(SCRIPT_FILE, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function readScriptMeta() {
+  try {
+    return JSON.parse(fs.readFileSync(SCRIPT_META, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+// ---------- 开关持久化（settings.json 的 scriptOptions） ----------
+
+function loadOptions() {
+  const s = settingsSync.loadSettings();
+  return (s.scriptOptions && typeof s.scriptOptions === "object") ? s.scriptOptions : {};
+}
+
+function saveOptions(options) {
+  const s = settingsSync.loadSettings();
+  s.scriptOptions = options;
+  settingsSync.saveSettings(s);
+  return options;
+}
+
+// ---------- 订阅 ----------
+
+/** 获取订阅 URL 列表（多订阅 subscribeUrls；缺失/为空时回落单条 subscribeUrl） */
+function getSubscribeUrls() {
+  const s = settingsSync.loadSettings();
+  const urls = Array.isArray(s.subscribeUrls) ? s.subscribeUrls.filter((u) => typeof u === "string" && u.trim()) : [];
+  if (urls.length > 0) return urls;
+  return s.subscribeUrl ? [s.subscribeUrl] : [];
+}
+
+/**
+ * 下载并解析订阅，返回 { proxies, names, urls, dns?, hosts? }；URL 列表不变时带 60s 缓存。
+ * 多个订阅节点合并：同名节点后覆盖先（避免 mihomo proxies 重名报错）；
+ * 单条订阅下载/解析失败 → 跳过该条并记日志，其余继续；全部失败才抛错。
+ */
+async function fetchAndParseSubscription() {
+  const urls = getSubscribeUrls();
+  if (urls.length === 0) {
+    throw new Error("未配置订阅链接，请先在「订阅管理」（或补丁设置）中填写");
+  }
+  const cacheKey = urls.join("\n");
+  if (subCache.key === cacheKey && subCache.data && Date.now() - subCache.time < SUB_CACHE_TTL) {
+    return subCache.data;
+  }
+
+  const mergedProxies = [];
+  const seen = new Set();
+  let firstDns = null;
+  let firstHosts = null;
+  let okCount = 0;
+  const perUrl = [];
+
+  for (const url of urls) {
+    log(`下载订阅 ${url} ...`);
+    try {
+      const subText = await fetchSubText(url);
+      let parsed;
+      try {
+        parsed = yaml.load(subText);
+      } catch (err) {
+        throw new Error(`订阅内容不是合法 YAML：${err.message}`);
+      }
+      const proxies = parsed && Array.isArray(parsed.proxies) ? parsed.proxies : [];
+      if (proxies.length === 0) {
+        throw new Error("订阅内容中未找到 proxies 节点列表");
+      }
+      // 同名节点后覆盖先
+      for (const p of proxies) {
+        if (!p || typeof p.name !== "string") continue;
+        if (seen.has(p.name)) {
+          const idx = mergedProxies.findIndex((x) => x.name === p.name);
+          if (idx >= 0) mergedProxies[idx] = p;
+        } else {
+          seen.add(p.name);
+          mergedProxies.push(p);
+        }
+      }
+      if (!firstDns && parsed.dns) firstDns = parsed.dns;
+      if (!firstHosts && parsed.hosts) firstHosts = parsed.hosts;
+      okCount++;
+      perUrl.push({ url, count: proxies.length });
+    } catch (err) {
+      log(`订阅失败（已跳过）：${url} → ${err.message}`);
+      perUrl.push({ url, error: err.message });
+    }
+  }
+
+  if (mergedProxies.length === 0) {
+    throw new Error("所有订阅均下载/解析失败，请检查订阅链接是否有效");
+  }
+  log(
+    perUrl.map((p) => `${p.count !== undefined ? `${p.count} 节点` : "失败"}`).join(" / ") +
+      ` → 合并 ${mergedProxies.length} 个节点（${okCount}/${urls.length} 条订阅成功）。`,
+  );
+
+  // 按「节点归属地标注」给节点名加国旗前缀（如 🇺🇸 美国），让上游脚本按国旗自动归入对应地区策略组；
+  // 已含该国旗 / 未标注 / 地区不在脚本地区定义内的节点保持原样
+  const flags = getRegionFlags();
+  const regionMap = loadNodeRegion();
+  const flaggedProxies = mergedProxies.map((p) => {
+    const region = regionMap[p.name];
+    const flag = region && flags[region];
+    if (!flag || p.name.startsWith(flag)) return p;
+    return { ...p, name: `${flag} ${p.name}` };
+  });
+  const data = {
+    proxies: flaggedProxies,
+    names: flaggedProxies.map((p) => p.name),
+    urls,
+  };
+  if (firstDns) data.dns = firstDns;
+  if (firstHosts) data.hosts = firstHosts;
+  subCache = { time: Date.now(), key: cacheKey, data };
+  return data;
+}
+
+// ---------- 分流组节点选择持久化（settings.json 顶层 scriptNodeSelection） ----------
+
+const NODE_SELECTION_KEY = "scriptNodeSelection";
+
+function loadNodeSelection() {
+  const s = settingsSync.loadSettings();
+  const sel = s[NODE_SELECTION_KEY];
+  return sel && typeof sel === "object" ? sel : {};
+}
+
+function saveNodeSelection(selection) {
+  const s = settingsSync.loadSettings();
+  s[NODE_SELECTION_KEY] = selection;
+  settingsSync.saveSettings(s);
+  return selection;
+}
+
+/**
+ * 常驻健康检查：所有策略组 lazy 关、探测间隔缩到 2 分钟。
+ * 上游模板默认 lazy:true（仅流量触发才测），重握手协议（xhttp/Reality/mlkem768）
+ * 的节点冷启动开销大，表现为首次访问高延迟/超时；改为常驻后节点延迟持续刷新。
+ */
+function applyKeepAlive(result) {
+  const groups = result["proxy-groups"];
+  if (!Array.isArray(groups)) return;
+  for (const g of groups) {
+    if (!g || typeof g !== "object") continue;
+    g.lazy = false;
+    if (typeof g.interval === "number" && g.interval > 0) g.interval = 120;
+  }
+}
+
+/**
+ * 按用户勾选（scriptNodeSelection）替换分流策略组的节点列表：
+ *  - 勾选节点名与本次订阅实际节点名求交集（订阅更新后失效的名字静默剔除，不报错）
+ *  - 交集为空（未勾选或全部失效）→ 保持脚本自动生成的列表不变
+ *  - 组不存在（对应开关已关闭）→ 跳过
+ *  - default-selected 不在新列表内时改为第一个勾选节点，避免指向失效名字
+ * 返回被替换的组名数组。
+ */
+function applyNodeSelection(result, selection, allNames) {
+  const nameSet = new Set(allNames);
+  const groups = result["proxy-groups"];
+  const replaced = [];
+  if (!Array.isArray(groups)) return replaced;
+  for (const [groupName, chosen] of Object.entries(selection)) {
+    if (!Array.isArray(chosen)) continue;
+    const group = groups.find((g) => g && g.name === groupName);
+    if (!group || !Array.isArray(group.proxies)) continue;
+    const picked = chosen.filter((n) => typeof n === "string" && nameSet.has(n));
+    if (picked.length === 0) continue;
+    group.proxies = [...picked];
+    if (group["default-selected"] !== undefined && !picked.includes(group["default-selected"])) {
+      group["default-selected"] = picked[0];
+    }
+    replaced.push(groupName);
+  }
+  return replaced;
+}
+
+// ---------- 节点归属地持久化（settings.json 顶层 scriptNodeRegion） ----------
+
+const NODE_REGION_KEY = "scriptNodeRegion";
+
+// 快照脚本不可用时的回落地区映射（name → flag）
+const FALLBACK_REGIONS = {
+  香港: "🇭🇰",
+  日本: "🇯🇵",
+  美国: "🇺🇸",
+  新加坡: "🇸🇬",
+  台湾省: "🇹🇼",
+};
+
+let regionFlagCache = null;
+
+/** 解析上游脚本里的地区名 → 国旗；快照不可用时回落内置映射 */
+function getRegionFlags() {
+  if (regionFlagCache) return regionFlagCache;
+  const flags = { ...FALLBACK_REGIONS };
+  const source = readScriptSource();
+  if (source) {
+    const re = /name:\s*'([^']+)',\s*\n\s*flag:\s*'([^']+)'/g;
+    for (const m of source.matchAll(re)) {
+      flags[m[1]] = m[2];
+    }
+  }
+  regionFlagCache = flags;
+  return flags;
+}
+
+function loadNodeRegion() {
+  const s = settingsSync.loadSettings();
+  const reg = s[NODE_REGION_KEY];
+  return reg && typeof reg === "object" ? reg : {};
+}
+
+/**
+ * 保存节点归属地映射 { 原名: "美国" }（null/空值条目剔除）。
+ * 保存后清空订阅缓存（下次解析按新标注给节点加国旗），并自动同步
+ * 「分流组节点选择」里的勾选名：标注改名后勾选跟随新国旗名，取消标注后还原原名，不丢勾选。
+ */
+function saveNodeRegion(region) {
+  const clean = {};
+  for (const [name, r] of Object.entries(region || {})) {
+    if (name && typeof r === "string" && r.trim()) clean[name] = r.trim();
+  }
+  // 同步分流组勾选：先去掉勾选名里已加的国旗前缀还原订阅原名，再按新标注重新确定名字
+  const selection = loadNodeSelection();
+  const flags = getRegionFlags();
+  const oldRegions = loadNodeRegion();
+  const newSel = {};
+  for (const [g, names] of Object.entries(selection)) {
+    if (!Array.isArray(names)) continue;
+    newSel[g] = names.map((n) => {
+      if (typeof n !== "string") return n;
+      let base = n;
+      for (const flag of Object.values(flags)) {
+        if (base.startsWith(flag + " ")) {
+          base = base.slice(flag.length + 1);
+          break;
+        }
+      }
+      if (clean[base]) {
+        const flag = flags[clean[base]];
+        return flag ? `${flag} ${base}` : base;
+      }
+      if (oldRegions[base]) return base; // 取消标注 → 还原原名
+      return n;
+    });
+  }
+  if (JSON.stringify(newSel) !== JSON.stringify(selection)) saveNodeSelection(newSel);
+  subCache = { time: 0, key: null, data: null };
+  const s = settingsSync.loadSettings();
+  s[NODE_REGION_KEY] = clean;
+  settingsSync.saveSettings(s);
+  return clean;
+}
+
+/** 获取订阅节点名、用户勾选、归属地标注与可选地区（供页面渲染；订阅失败返回 error） */
+async function getNodeList() {
+  const selection = loadNodeSelection();
+  const regions = loadNodeRegion();
+  const regionList = Object.entries(getRegionFlags()).map(([name, flag]) => ({ name, flag }));
+  const urls = getSubscribeUrls();
+  try {
+    const { names } = await fetchAndParseSubscription();
+    return { nodes: names, selection, regions, regionList, urls };
+  } catch (err) {
+    return { nodes: [], selection, regions, regionList, urls, error: err.message };
+  }
+}
+
+/** 保存订阅 URL 列表；第一个自动同步到 subscribeUrl（YAML 版补丁与补丁设置用）；清订阅缓存 */
+function saveSubscriptions(urls) {
+  const clean = urls.filter((u) => typeof u === "string" && u.trim());
+  const s = settingsSync.loadSettings();
+  s.subscribeUrls = clean;
+  if (clean.length > 0) s.subscribeUrl = clean[0];
+  settingsSync.saveSettings(s);
+  clearSubCache();
+  return clean;
+}
+
+/** 清空订阅解析缓存（客户端「更新」时强制拉取最新订阅，跳过 60s 缓存） */
+function clearSubCache() {
+  subCache = { time: 0, key: null, data: null };
+}
+
+// ---------- 对外操作 ----------
+
+/** 下载上游脚本并保存快照；返回 {ok, sha, options, error?} */
+async function syncScript() {
+  const source = await download(SCRIPT_URLS);
+  if (source === null) {
+    return { ok: false, error: "上游脚本下载失败，请检查网络后重试" };
+  }
+  try {
+    const { defaults, labels, groups } = extractOptions(source);
+    fs.mkdirSync(SCRIPT_DIR, { recursive: true });
+    fs.writeFileSync(SCRIPT_FILE, source, "utf8");
+    const meta = { time: new Date().toISOString(), sha: sha1(source) };
+    fs.writeFileSync(SCRIPT_META, JSON.stringify(meta, null, 2) + "\n", "utf8");
+    log("上游脚本已保存到本地快照。");
+    const user = loadOptions();
+    const options = Object.entries(defaults).map(([key, def]) => ({
+      key,
+      label: labels[key] || "",
+      group: groups[key] || "其他",
+      value: typeof user[key] === "boolean" ? user[key] : defaultOf(key, def),
+      default: def,
+    }));
+    return { ok: true, sha: meta.sha, time: meta.time, options };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/** 生成脚本版配置：下载订阅 → 解析节点 → 执行脚本 → 写产物 */
+async function generate() {
+  lastLog = { time: new Date().toISOString(), lines: [] };
+  try {
+    if (!yaml) {
+      throw new Error("js-yaml 未加载，请先执行 npm install");
+    }
+    const source = readScriptSource();
+    if (source === null) {
+      throw new Error("尚未下载上游脚本，请先在页面点击「下载上游脚本」");
+    }
+    const user = loadOptions();
+    const { source: injected } = injectOptions(source, user);
+    const { main } = executeScript(injected);
+
+    // 订阅 → 节点
+    const { proxies, dns, hosts, names } = await fetchAndParseSubscription();
+
+    const config = { proxies };
+    if (dns) config.dns = dns;
+    if (hosts) config.hosts = hosts;
+
+    const result = main(config);
+    if (!result || !Array.isArray(result.proxies) || !Array.isArray(result["proxy-groups"])) {
+      throw new Error("脚本执行结果异常：缺少 proxies 或 proxy-groups");
+    }
+
+    // 后处理：按用户勾选替换分流策略组节点列表
+    const replacedGroups = applyNodeSelection(result, loadNodeSelection(), names);
+    if (replacedGroups.length > 0) {
+      log(`已应用节点勾选：${replacedGroups.join("、")}`);
+    }
+
+    // 后处理：策略组常驻健康检查（lazy 关 + 2 分钟间隔）
+    applyKeepAlive(result);
+
+    const outYaml = yaml.dump(result, { lineWidth: -1, noRefs: true });
+    const previous = fs.existsSync(OUTPUT_FILE) ? fs.readFileSync(OUTPUT_FILE, "utf8") : null;
+    const changed = previous !== outYaml;
+    if (!changed) {
+      log("内容与上次一致，跳过写入。");
+    } else {
+      fs.writeFileSync(OUTPUT_FILE, outYaml, "utf8");
+      log(`已写入 ${path.basename(OUTPUT_FILE)}（${outYaml.length} 字符）。`);
+    }
+
+    log(
+      `脚本版生成完成：${result.proxies.length} 节点 / ${result["proxy-groups"].length} 策略组 / ${result.rules.length} 规则。`,
+    );
+    return {
+      ok: true,
+      changed,
+      proxies: result.proxies.length,
+      groups: result["proxy-groups"].length,
+      rules: (result.rules || []).length,
+      outputLen: outYaml.length,
+      time: new Date().toISOString(),
+      nodes: names,
+      replacedGroups,
+    };
+  } catch (err) {
+    log(`错误：${err.message}`);
+    return { ok: false, error: err.message };
+  }
+}
+
+/** 脚本版状态（供页面展示） */
+function getStatus() {
+  const meta = readScriptMeta();
+  const source = readScriptSource();
+  let options = null;
+  if (source) {
+    try {
+      const { defaults, labels, groups } = extractOptions(source);
+      const user = loadOptions();
+      options = Object.entries(defaults).map(([key, def]) => ({
+        key,
+        label: labels[key] || "",
+        group: groups[key] || "其他",
+        value: typeof user[key] === "boolean" ? user[key] : defaultOf(key, def),
+        default: def,
+      }));
+    } catch {}
+  }
+  let output = null;
+  try {
+    const st = fs.statSync(OUTPUT_FILE);
+    output = { exists: st.isFile(), size: st.isFile() ? st.size : null };
+  } catch {
+    output = { exists: false, size: null };
+  }
+  return {
+    scriptDownloaded: source !== null,
+    scriptSha: meta ? meta.sha : null,
+    scriptTime: meta ? meta.time : null,
+    options,
+    output,
+  };
+}
+
+// CLI 入口：node scriptGenerator.js sync | generate
+if (require.main === module) {
+  const cmd = process.argv[2] || "generate";
+  const fn = cmd === "sync" ? syncScript() : generate();
+  fn.then((r) => {
+    if (!r.ok) process.exit(1);
+  });
+}
+
+module.exports = {
+  SCRIPT_URLS,
+  DATA_DIR,
+  SCRIPT_DIR,
+  SCRIPT_FILE,
+  SCRIPT_META,
+  OUTPUT_FILE,
+  NODE_SELECTION_KEY,
+  NODE_REGION_KEY,
+  extractOptions,
+  injectOptions,
+  executeScript,
+  download,
+  fetchAndParseSubscription,
+  loadOptions,
+  saveOptions,
+  loadNodeSelection,
+  saveNodeSelection,
+  applyNodeSelection,
+  applyKeepAlive,
+  getRegionFlags,
+  loadNodeRegion,
+  saveNodeRegion,
+  getSubscribeUrls,
+  saveSubscriptions,
+  clearSubCache,
+  getSubInfo,
+  getNodeList,
+  syncScript,
+  generate,
+  getStatus,
+  getLastLog: () => lastLog,
+  clearLastLog,
+};
