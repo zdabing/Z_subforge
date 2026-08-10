@@ -101,7 +101,7 @@ async function fetchSubText(url) {
   if (userinfo) subInfo.userinfo = userinfo;
   if (updateInterval) subInfo.updateInterval = updateInterval;
   // 机场显示名：优先取 SUB_TITLE 环境变量（容器部署可自定义，如 NAS 上设置 SUB_TITLE=MyAirport），
-  // 否则按订阅域名主名称推断（如 sub.nekocloud.host → nekocloud）
+  // 否则按订阅域名主名称推断（如 sub.example.com → example）
   try {
     const name = process.env.SUB_TITLE || new URL(url).hostname.replace(/^sub\./, "").split(".")[0];
     if (name) subInfo.title = name;
