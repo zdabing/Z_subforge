@@ -16,6 +16,12 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: 校验 Docker Hub 密钥已配置
+        if: ${{ secrets.DOCKERHUB_USERNAME == '' || secrets.DOCKERHUB_TOKEN == '' }}
+        run: |
+          echo "::error::未配置 Docker Hub 密钥。请先在仓库 Settings → Secrets and variables → Actions 添加 DOCKERHUB_USERNAME（Docker Hub 用户名）和 DOCKERHUB_TOKEN（Access Token），然后重新触发本工作流。"
+          exit 1
+
       - name: 设置 QEMU（多架构支持，NAS 常见 arm64 可拉取）
         uses: docker/setup-qemu-action@v3
 
