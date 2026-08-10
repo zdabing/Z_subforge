@@ -1238,6 +1238,28 @@ async function testGistPush() {
   setTimeout(() => { msg.textContent = ""; }, 3000);
 }
 
+// 自动推送开关：勾选/取消立即保存（与其他开关行为一致，避免轮询打回）
+async function saveGistEnabled() {
+  const cb = $("gistEnabled");
+  // token/gistId 输入框为空时传 undefined，服务端保持已存值不被覆盖
+  const token = $("gistToken").value.trim() || undefined;
+  const gistId = $("gistId").value.trim() || undefined;
+  try {
+    const r = await fetch("/api/script/gist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, gistId, filename: $("gistFilename").value.trim(), enabled: cb.checked }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "保存失败");
+    appendScriptLog(`Gist 自动推送已${cb.checked ? "开启" : "关闭"}`);
+    refreshScriptStatus();
+  } catch (e) {
+    cb.checked = !cb.checked; // 失败回滚
+    appendScriptLog("保存 Gist 开关失败：" + (e.message || ""), true);
+  }
+}
+
 // ---------- 产物 ----------
 async function downloadOutput() {
   const r = await fetch("/api/output");
@@ -1299,6 +1321,7 @@ $("btnScriptSync").addEventListener("click", doScriptSync);
 $("btnScriptGen").addEventListener("click", doScriptGen);
 $("btnGistSave").addEventListener("click", saveGistCfg);
 $("btnGistTest").addEventListener("click", testGistPush);
+$("gistEnabled").addEventListener("change", saveGistEnabled);
 $("btnScriptDl").addEventListener("click", async () => {
   const r = await fetch("/api/script/output");
   if (!r.ok) return;

@@ -281,12 +281,21 @@ function loadGistConfig() {
   };
 }
 
-/** 保存 Gist 推送配置（仅持久化四个字段） */
+/**
+ * 保存 Gist 推送配置（仅持久化四个字段）。
+ * token/gistId 传 undefined 时保持原值（勾选开关时避免用空输入框覆盖已存配置），
+ * 传字符串则按值设置（空字符串即清除）。
+ */
 function saveGistConfig(cfg) {
   const s = settingsSync.loadSettings();
-  const token = typeof cfg.token === "string" ? cfg.token.trim() : "";
-  const gistId = typeof cfg.gistId === "string" ? cfg.gistId.trim() : "";
-  const filename = typeof cfg.filename === "string" && cfg.filename.trim() ? cfg.filename.trim() : "mihomoScript.synced.yaml";
+  const prev = {
+    token: typeof s.gistToken === "string" ? s.gistToken : "",
+    gistId: typeof s.gistId === "string" ? s.gistId : "",
+    filename: typeof s.gistFilename === "string" && s.gistFilename ? s.gistFilename : "mihomoScript.synced.yaml",
+  };
+  const token = typeof cfg.token === "string" ? cfg.token.trim() : prev.token;
+  const gistId = typeof cfg.gistId === "string" ? cfg.gistId.trim() : prev.gistId;
+  const filename = typeof cfg.filename === "string" && cfg.filename.trim() ? cfg.filename.trim() : prev.filename;
   s.gistToken = token;
   s.gistId = gistId;
   s.gistFilename = filename;
