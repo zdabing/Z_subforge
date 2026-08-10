@@ -1,8 +1,8 @@
 # subforge 订阅配置生成服务
-# 使用：docker compose up -d（先修改下面 image 为你自己的 Docker Hub 地址）
+# 使用：docker compose up -d
 services:
   subforge:
-    image: <你的DockerHub用户名>/subforge:latest
+    image: wzbsdb/subforge:latest
     container_name: subforge
     restart: unless-stopped
     ports:
