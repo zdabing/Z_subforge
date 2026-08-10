@@ -338,15 +338,9 @@
       <div id="patchList"></div>
     </div>
 
-    <div class="cols">
-      <div class="panel">
-        <h2>同步日志 <button id="btnClearLog" style="padding:2px 10px;font-size:11px">清空</button></h2>
-        <pre id="log">尚未执行同步</pre>
-      </div>
-      <div class="panel">
-        <h2>差异预览<span class="hint">上游最新 vs 上次产物 · 绿=新增 红=删除</span></h2>
-        <div class="diff" id="diff"><div class="empty">点击「全部同步」前可先查看差异</div></div>
-      </div>
+    <div class="panel">
+      <h2>同步日志 <button id="btnClearLog" style="padding:2px 10px;font-size:11px">清空</button></h2>
+      <pre id="log">尚未执行同步</pre>
     </div>
 
     <!-- 脚本版高级 -->
@@ -507,39 +501,6 @@ async function loadLog() {
     el.textContent = d.lines.join("\n");
     el.scrollTop = el.scrollHeight;
   } catch {}
-}
-
-// ---------- 差异 ----------
-async function loadDiff() {
-  const el = $("diff");
-  try {
-    const r = await fetch("/api/diff");
-    const d = await r.json();
-    if (d.error) {
-      el.innerHTML = `<div class="empty">${escapeHtml(d.error)}</div>`;
-      return;
-    }
-    if (!d.ops.length) {
-      el.innerHTML = `<div class="empty">无差异</div>`;
-      return;
-    }
-    const html = [];
-    let ln = 0;
-    for (const op of d.ops) {
-      ln++;
-      const mark = op.type === "add" ? "+" : op.type === "del" ? "−" : " ";
-      html.push(
-        `<div class="line ${op.type}"><span class="ln">${ln}</span><span class="mark">${mark}</span><span>${escapeHtml(op.text) || " "}</span></div>`,
-      );
-      if (ln > 3000) {
-        html.push(`<div class="empty">…差异过大，仅显示前 3000 行</div>`);
-        break;
-      }
-    }
-    el.innerHTML = html.join("");
-  } catch {
-    el.innerHTML = `<div class="empty">加载差异失败</div>`;
-  }
 }
 
 // ---------- 补丁设置 ----------
@@ -1303,7 +1264,7 @@ $("btnCoreGen").addEventListener("click", doCoreGen);
 $("btnCoreSubSave").addEventListener("click", saveCoreSub);
 $("coreSubInput").addEventListener("keydown", (e) => { if (e.key === "Enter") saveCoreSub(); });
 $("btnSync").addEventListener("click", doSync);
-$("btnRefresh").addEventListener("click", () => { refreshStatus(); refreshScriptStatus(); loadDiff(); loadLog(); });
+$("btnRefresh").addEventListener("click", () => { refreshStatus(); refreshScriptStatus(); loadLog(); });
 $("btnClearLog").addEventListener("click", async () => {
   $("log").textContent = "尚未执行同步";
   try { await fetch("/api/log", { method: "POST" }); } catch {}
@@ -1330,13 +1291,7 @@ $("btnClearScriptLog").addEventListener("click", async () => {
   try { await fetch("/api/script/log", { method: "POST" }); } catch {}
 });
 
-// 无轮询：状态只在页面加载、按钮操作完成后、高级区展开时刷新（完全手动/操作驱动）
-
-// 差异预览在高级区展开时加载（默认折叠不请求）
-const advDetails = document.querySelector("details.advanced");
-if (advDetails) {
-  advDetails.addEventListener("toggle", (e) => { if (e.target.open) loadDiff(); });
-}
+// 无轮询：状态只在页面加载、按钮操作完成后刷新（完全手动/操作驱动）
 
 // 初次加载（此后状态由各操作完成后的刷新驱动，页面静止无请求）
 refreshStatus();
