@@ -704,23 +704,7 @@ async function saveScriptOption(cb) {
 let subUrls = []; // 页面编辑中的 URL 列表
 let subSaved = []; // 服务端已保存的列表
 
-async function refreshScriptSubs() {
-  try {
-    const r = await fetch("/api/script/nodes");
-    const d = await r.json();
-    subSaved = Array.isArray(d.urls) ? d.urls : [];
-    subUrls = [...subSaved];
-    renderScriptSubs();
-    // 核心面板订阅框同步当前第一个订阅
-    const core = $("coreSubInput");
-    if (core) core.value = subSaved[0] || "";
-  } catch {
-    subSaved = [];
-    subUrls = [];
-    renderScriptSubs();
-  }
-}
-
+// 订阅列表由 refreshScriptNodes 的同一份 /api/script/nodes 数据渲染，避免重复请求导致订阅重复下载
 function renderScriptSubs() {
   const wrap = $("scriptSubs");
   const placeholder = escapeHtml("https://机场.com/sub/xxxx/mihomo-nodes.yaml");
@@ -872,11 +856,20 @@ async function refreshScriptNodes() {
     nodeSelLoaded = true;
     renderScriptNodeRegion();
     renderScriptNodeSel();
+    // 同一份数据顺便渲染订阅管理区（不再单独请求，避免订阅重复下载）
+    subSaved = Array.isArray(d.urls) ? d.urls : [];
+    subUrls = [...subSaved];
+    renderScriptSubs();
+    const core = $("coreSubInput");
+    if (core) core.value = subSaved[0] || "";
   } catch {
     nodeSelState.error = "无法连接服务";
     nodeSelLoaded = true;
     renderScriptNodeRegion();
     renderScriptNodeSel();
+    subSaved = [];
+    subUrls = [];
+    renderScriptSubs();
   }
 }
 
@@ -1337,22 +1330,30 @@ $("btnClearScriptLog").addEventListener("click", async () => {
   try { await fetch("/api/script/log", { method: "POST" }); } catch {}
 });
 
-// 轮询：同步/生成中每 2 秒刷新，否则每 15 秒
-setInterval(() => { refreshStatus(); refreshScriptStatus(); if (!document.hidden) loadDiff(); }, 15000);
+// 轮询：仅在同步/生成进行中每 2 秒刷新（空闲时不打扰）；每 15 秒轻量刷新状态
+setInterval(() => { refreshStatus(); refreshScriptStatus(); }, 15000);
 setInterval(async () => {
   const s = $("stateBadge");
-  if (s.textContent.includes("同步") || s.textContent.includes("生成")) { refreshStatus(); loadLog(); }
-  if (!$("btnScriptGen").disabled) { refreshScriptStatus(); loadScriptLog(); }
+  if (s.textContent.includes("同步") || s.textContent.includes("生成")) {
+    refreshStatus();
+    refreshScriptStatus();
+    loadLog();
+    loadScriptLog();
+  }
 }, 2000);
+
+// 差异预览仅在高级区展开时刷新（避免每 15 秒全量计算 diff）
+const advDetails = document.querySelector("details.advanced");
+if (advDetails) {
+  advDetails.addEventListener("toggle", (e) => { if (e.target.open) loadDiff(); });
+}
 
 // 初次加载
 refreshStatus();
 refreshScriptStatus();
-refreshScriptSubs();
 refreshScriptNodes();
 loadSettings();
 loadLog();
-loadDiff();
 loadScriptLog();
 </script>
 </body>

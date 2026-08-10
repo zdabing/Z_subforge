@@ -577,18 +577,22 @@ function saveNodeRegion(region) {
   return clean;
 }
 
+// 订阅解析进行中的请求（并发访问时复用，避免页面同时触发多个请求导致订阅重复下载）
+let nodesInflight = null;
+
 /** 获取订阅节点名、用户勾选、归属地标注与可选地区（供页面渲染；订阅失败返回 error） */
 async function getNodeList() {
   const selection = loadNodeSelection();
   const regions = loadNodeRegion();
   const regionList = Object.entries(getRegionFlags()).map(([name, flag]) => ({ name, flag }));
   const urls = getSubscribeUrls();
-  try {
-    const { names } = await fetchAndParseSubscription();
-    return { nodes: names, selection, regions, regionList, urls };
-  } catch (err) {
-    return { nodes: [], selection, regions, regionList, urls, error: err.message };
+  if (!nodesInflight) {
+    nodesInflight = fetchAndParseSubscription()
+      .then(({ names }) => ({ nodes: names, selection, regions, regionList, urls }))
+      .catch((err) => ({ nodes: [], selection, regions, regionList, urls, error: err.message }))
+      .finally(() => { nodesInflight = null; });
   }
+  return nodesInflight;
 }
 
 /** 保存订阅 URL 列表；第一个自动同步到 subscribeUrl（YAML 版补丁与补丁设置用）；清订阅缓存 */
