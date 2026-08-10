@@ -639,13 +639,13 @@ async function refreshScriptStatus() {
     $("btnScriptDl").disabled = !s.output || !s.output.exists || s.busy;
     $("btnCoreGen").disabled = s.busy;
 
-    // Gist 配置状态（token 不回显明文，仅显示是否已配置）
+    // Gist 配置状态（token 不回显明文；不覆盖输入框 value，避免轮询清空正在编辑的内容，
+    // 已配置状态用占位符提示）
     if (s.gist) {
-      $("gistId").value = s.gist.hasId ? "" : "";
-      $("gistId").placeholder = s.gist.hasId ? "已配置（如需修改请填写新 ID）" : "Gist ID（URL 中 gist.github.com/xx/ 后面那串）";
+      $("gistId").placeholder = s.gist.hasId ? "已配置（如需修改请直接填写新 Gist ID）" : "Gist ID（URL 中 gist.github.com/xx/ 后面那串）";
+      $("gistToken").placeholder = s.gist.hasToken ? "已配置（如需更换请填写新 Token）" : "GitHub Personal Access Token（需 gist 权限）";
       $("gistFilename").value = s.gist.filename || "mihomoScript.synced.yaml";
       $("gistEnabled").checked = s.gist.enabled;
-      $("gistToken").placeholder = s.gist.hasToken ? "已配置（如需更换请填写新 Token）" : "GitHub Personal Access Token（需 gist 权限）";
       $("gistStatus").textContent = s.gist.configured ? "已配置 ✓" : (s.gist.hasId || s.gist.hasToken ? "未完成（缺一项）" : "未配置");
       $("gistStatus").className = "task-status" + (s.gist.configured ? "" : "");
     }
