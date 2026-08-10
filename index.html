@@ -1330,25 +1330,15 @@ $("btnClearScriptLog").addEventListener("click", async () => {
   try { await fetch("/api/script/log", { method: "POST" }); } catch {}
 });
 
-// 轮询：仅在同步/生成进行中每 2 秒刷新（空闲时不打扰）；每 15 秒轻量刷新状态
-setInterval(() => { refreshStatus(); refreshScriptStatus(); }, 15000);
-setInterval(async () => {
-  const s = $("stateBadge");
-  if (s.textContent.includes("同步") || s.textContent.includes("生成")) {
-    refreshStatus();
-    refreshScriptStatus();
-    loadLog();
-    loadScriptLog();
-  }
-}, 2000);
+// 无轮询：状态只在页面加载、按钮操作完成后、高级区展开时刷新（完全手动/操作驱动）
 
-// 差异预览仅在高级区展开时刷新（避免每 15 秒全量计算 diff）
+// 差异预览在高级区展开时加载（默认折叠不请求）
 const advDetails = document.querySelector("details.advanced");
 if (advDetails) {
   advDetails.addEventListener("toggle", (e) => { if (e.target.open) loadDiff(); });
 }
 
-// 初次加载
+// 初次加载（此后状态由各操作完成后的刷新驱动，页面静止无请求）
 refreshStatus();
 refreshScriptStatus();
 refreshScriptNodes();
