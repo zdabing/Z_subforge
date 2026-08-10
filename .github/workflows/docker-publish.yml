@@ -16,11 +16,17 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 校验 Docker Hub 密钥已配置
-        if: ${{ secrets.DOCKERHUB_USERNAME == '' || secrets.DOCKERHUB_TOKEN == '' }}
+      # Secrets 值可能带换行/首尾空白（粘贴带入），会导致 tags 被拆行成非法镜像名，
+      # 这里统一提取并去除所有空白，后续 login 与 tag 均用它；为空则直接报错中止。
+      - name: 提取并校验 Docker Hub 用户名
+        id: dockerhub
         run: |
-          echo "::error::未配置 Docker Hub 密钥。请先在仓库 Settings → Secrets and variables → Actions 添加 DOCKERHUB_USERNAME（Docker Hub 用户名）和 DOCKERHUB_TOKEN（Access Token），然后重新触发本工作流。"
-          exit 1
+          USER="$(echo "${{ secrets.DOCKERHUB_USERNAME }}" | tr -d '[:space:]')"
+          echo "user=${USER}" >> "$GITHUB_OUTPUT"
+          if [ -z "$USER" ]; then
+            echo "::error::DOCKERHUB_USERNAME 未配置或为空。请在仓库 Settings → Secrets and variables → Actions 添加后重跑。"
+            exit 1
+          fi
 
       - name: 设置 QEMU（多架构支持，NAS 常见 arm64 可拉取）
         uses: docker/setup-qemu-action@v3
@@ -31,7 +37,7 @@ jobs:
       - name: 登录 Docker Hub
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ steps.dockerhub.outputs.user }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: 构建并推送
@@ -42,7 +48,7 @@ jobs:
           # 多架构：NAS 的 x86_64 / arm64 / armv7 都能拉
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/subforge:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/subforge:${{ github.sha }}
+            ${{ steps.dockerhub.outputs.user }}/subforge:latest
+            ${{ steps.dockerhub.outputs.user }}/subforge:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
