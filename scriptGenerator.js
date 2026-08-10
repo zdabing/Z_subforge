@@ -268,6 +268,72 @@ function saveOptions(options) {
   return options;
 }
 
+// ---------- Gist 推送配置（settings.json 顶层，token 不上传 Git） ----------
+
+/** 读取 Gist 推送配置（token / gistId / filename / enabled）；文件缺失或损坏时回落默认 */
+function loadGistConfig() {
+  const s = settingsSync.loadSettings();
+  return {
+    token: typeof s.gistToken === "string" ? s.gistToken : "",
+    gistId: typeof s.gistId === "string" ? s.gistId : "",
+    filename: typeof s.gistFilename === "string" && s.gistFilename ? s.gistFilename : "mihomoScript.synced.yaml",
+    enabled: s.gistEnabled === true,
+  };
+}
+
+/** 保存 Gist 推送配置（仅持久化四个字段） */
+function saveGistConfig(cfg) {
+  const s = settingsSync.loadSettings();
+  const token = typeof cfg.token === "string" ? cfg.token.trim() : "";
+  const gistId = typeof cfg.gistId === "string" ? cfg.gistId.trim() : "";
+  const filename = typeof cfg.filename === "string" && cfg.filename.trim() ? cfg.filename.trim() : "mihomoScript.synced.yaml";
+  s.gistToken = token;
+  s.gistId = gistId;
+  s.gistFilename = filename;
+  s.gistEnabled = cfg.enabled === true;
+  settingsSync.saveSettings(s);
+  return { token, gistId, filename, enabled: cfg.enabled === true };
+}
+
+/**
+ * 推送 YAML 内容到已有 Gist（GitHub REST API PATCH，文件不存在则自动新建）。
+ * 未启用/未配置 → 返回 { ok:false, reason:"未配置" }；失败 → { ok:false, error }；不抛出异常。
+ */
+async function pushToGist(yamlText) {
+  const cfg = loadGistConfig();
+  if (!cfg.enabled) return { ok: false, reason: "Gist 推送未启用" };
+  if (!cfg.token) return { ok: false, reason: "未配置 GitHub Token" };
+  if (!cfg.gistId) return { ok: false, reason: "未配置 Gist ID" };
+  const api = `https://api.github.com/gists/${encodeURIComponent(cfg.gistId)}`;
+  try {
+    const res = await fetch(api, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${cfg.token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "subforge",
+      },
+      body: JSON.stringify({
+        files: { [cfg.filename]: { content: yamlText } },
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      let msg = `HTTP ${res.status}`;
+      try {
+        const j = JSON.parse(detail);
+        if (j.message) msg += `：${j.message}`;
+      } catch {}
+      return { ok: false, error: msg };
+    }
+    const g = await res.json();
+    return { ok: true, url: g.html_url, gistId: cfg.gistId };
+  } catch (err) {
+    return { ok: false, error: err && err.message ? err.message : String(err) };
+  }
+}
+
 // ---------- 订阅 ----------
 
 /** 获取订阅 URL 列表（多订阅 subscribeUrls；缺失/为空时回落单条 subscribeUrl） */
@@ -607,6 +673,19 @@ async function generate() {
       log(`已写入 ${path.basename(OUTPUT_FILE)}（${outYaml.length} 字符）。`);
     }
 
+    // 内容有变化且启用 Gist 推送时，自动推送到 Gist；失败仅记日志，不阻塞生成
+    let gist = null;
+    if (changed && loadGistConfig().enabled) {
+      const r = await pushToGist(outYaml);
+      if (r.ok) {
+        log(`✓ 已推送到 Gist：${r.url}`);
+        gist = { pushed: true, url: r.url };
+      } else {
+        log(`Gist 推送失败（${r.error || r.reason}），已跳过。`);
+        gist = { pushed: false, error: r.error || r.reason };
+      }
+    }
+
     log(
       `脚本版生成完成：${result.proxies.length} 节点 / ${result["proxy-groups"].length} 策略组 / ${result.rules.length} 规则。`,
     );
@@ -620,6 +699,7 @@ async function generate() {
       time: new Date().toISOString(),
       nodes: names,
       replacedGroups,
+      gist,
     };
   } catch (err) {
     log(`错误：${err.message}`);
@@ -658,6 +738,17 @@ function getStatus() {
     scriptTime: meta ? meta.time : null,
     options,
     output,
+    // Gist 推送配置状态（token 只回显布尔，不泄露明文）
+    gist: (() => {
+      const c = loadGistConfig();
+      return {
+        enabled: c.enabled,
+        hasId: c.gistId.length > 0,
+        hasToken: c.token.length > 0,
+        filename: c.filename,
+        configured: c.token.length > 0 && c.gistId.length > 0,
+      };
+    })(),
   };
 }
 
@@ -686,6 +777,9 @@ module.exports = {
   fetchAndParseSubscription,
   loadOptions,
   saveOptions,
+  loadGistConfig,
+  saveGistConfig,
+  pushToGist,
   loadNodeSelection,
   saveNodeSelection,
   applyNodeSelection,

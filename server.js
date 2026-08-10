@@ -505,6 +505,38 @@ async function routeScript(req, res, url) {
     return;
   }
 
+  // 保存 Gist 推送配置（token 存 settings.json，不上传 Git）
+  if (req.method === "POST" && url.pathname === "/api/script/gist") {
+    try {
+      const body = await readBody(req);
+      const cfg = scriptGen.saveGistConfig({
+        token: body.token,
+        gistId: body.gistId,
+        filename: body.filename,
+        enabled: body.enabled === true,
+      });
+      sendJson(res, 200, { ok: true, config: { hasToken: cfg.token.length > 0, hasId: cfg.gistId.length > 0, filename: cfg.filename, enabled: cfg.enabled } });
+    } catch (err) {
+      sendJson(res, 400, { error: err.message });
+    }
+    return;
+  }
+
+  // 测试推送：把当前产物内容推送到 Gist（验证 token/gistId 可用，再开自动开关）
+  if (req.method === "POST" && url.pathname === "/api/script/gist/test") {
+    let text = null;
+    try {
+      text = fs.readFileSync(scriptGen.OUTPUT_FILE, "utf8");
+    } catch {}
+    if (text === null) {
+      sendJson(res, 400, { error: "尚无产物，请先生成 YAML" });
+      return;
+    }
+    const r = await scriptGen.pushToGist(text);
+    sendJson(res, r.ok ? 200 : 400, r);
+    return;
+  }
+
   // 生成脚本版配置
   if (req.method === "POST" && url.pathname === "/api/script/generate") {
     if (scriptBusy) {

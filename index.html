@@ -360,6 +360,31 @@
     <div id="scriptSubs" style="margin-top:14px"></div>
     <div id="scriptNodeRegion" style="margin-top:14px"></div>
     <div id="scriptNodeSel" style="margin-top:14px"></div>
+
+    <!-- Gist 推送 -->
+    <div style="margin-top:20px;border-top:1px dashed var(--border);padding-top:14px">
+      <div style="font-size:13px;font-weight:600;margin:4px 0 8px">Gist 推送
+        <span class="hint">生成内容有变化时自动推送到你的 Gist · Token 仅存本机 settings.json，不上传 Git</span>
+        <span class="task-status" id="gistStatus" style="float:right"></span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input class="var-input" type="password" id="gistToken" placeholder="GitHub Personal Access Token（需 gist 权限）" style="flex:1;min-width:240px">
+        <input class="var-input" type="text" id="gistId" placeholder="Gist ID（URL 中 gist.github.com/xx/ 后面那串）" style="flex:1;min-width:180px">
+        <input class="var-input" type="text" id="gistFilename" placeholder="文件名" style="width:200px">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+        <button id="btnGistSave" style="padding:4px 14px;font-size:12px">保存配置</button>
+        <button id="btnGistTest" style="padding:4px 14px;font-size:12px">测试推送</button>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:var(--muted)">
+          <input type="checkbox" id="gistEnabled" style="accent-color:var(--accent)"> 生成后自动推送
+        </label>
+        <span class="task-status" id="gistMsg"></span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px">
+        用法：Token 在 GitHub Settings → Developer settings → Personal access tokens 生成（勾选 gist 权限）。
+        Gist 可新建任意一个（也可用已有的），更新时按文件名覆盖对应文件。
+      </div>
+    </div>
   </div>
 </details>
 
@@ -451,6 +476,9 @@ async function doSync() {
         appendScriptLog(
           `✓ 脚本版已同步：${data.script.proxies} 节点 / ${data.script.groups} 策略组 / ${data.script.rules} 规则${data.script.changed ? "" : "（无变化）"}`,
         );
+        if (data.script.gist) {
+          appendScriptLog(data.script.gist.pushed ? `✓ 已推送到 Gist：${data.script.gist.url}` : `Gist 未推送：${data.script.gist.error || "未启用"}`);
+        }
       } else {
         appendScriptLog("脚本版同步失败：" + (data.script.error || ""), true);
       }
@@ -610,6 +638,17 @@ async function refreshScriptStatus() {
     $("btnScriptGen").disabled = !s.scriptDownloaded || s.busy;
     $("btnScriptDl").disabled = !s.output || !s.output.exists || s.busy;
     $("btnCoreGen").disabled = s.busy;
+
+    // Gist 配置状态（token 不回显明文，仅显示是否已配置）
+    if (s.gist) {
+      $("gistId").value = s.gist.hasId ? "" : "";
+      $("gistId").placeholder = s.gist.hasId ? "已配置（如需修改请填写新 ID）" : "Gist ID（URL 中 gist.github.com/xx/ 后面那串）";
+      $("gistFilename").value = s.gist.filename || "mihomoScript.synced.yaml";
+      $("gistEnabled").checked = s.gist.enabled;
+      $("gistToken").placeholder = s.gist.hasToken ? "已配置（如需更换请填写新 Token）" : "GitHub Personal Access Token（需 gist 权限）";
+      $("gistStatus").textContent = s.gist.configured ? "已配置 ✓" : (s.gist.hasId || s.gist.hasToken ? "未完成（缺一项）" : "未配置");
+      $("gistStatus").className = "task-status" + (s.gist.configured ? "" : "");
+    }
 
     if (s.options) renderScriptOptions(s.options);
   } catch {
@@ -791,6 +830,9 @@ async function doCoreGen() {
       appendScriptLog(`✓ 生成成功：${d.proxies} 节点 / ${d.groups} 策略组 / ${d.rules} 规则${d.changed ? "" : "（无变化）"}`);
       if (d.replacedGroups && d.replacedGroups.length) {
         appendScriptLog("已应用节点勾选：" + d.replacedGroups.join("、"));
+      }
+      if (d.gist) {
+        appendScriptLog(d.gist.pushed ? `✓ 已推送到 Gist：${d.gist.url}` : `Gist 未推送：${d.gist.error || "未启用"}`);
       }
       stat.textContent = `${d.proxies} 节点 · ${d.groups} 策略组 · ${d.rules} 规则 · ${d.changed ? "已更新" : "无变化"} · ${fmtTime(d.time)}`;
       syncNodesAfterGenerate(d);
@@ -1137,6 +1179,9 @@ async function doScriptGen() {
     const d = await r.json();
     if (d.ok) {
       appendScriptLog(`✓ 生成成功：${d.proxies} 节点 / ${d.groups} 策略组 / ${d.rules} 规则${d.changed ? "" : "（无变化）"}${d.replacedGroups && d.replacedGroups.length ? "｜已应用勾选：" + d.replacedGroups.join("、") : ""}`);
+      if (d.gist) {
+        appendScriptLog(d.gist.pushed ? `✓ 已推送到 Gist：${d.gist.url}` : `Gist 未推送：${d.gist.error || "未启用"}`);
+      }
       syncNodesAfterGenerate(d);
     } else {
       appendScriptLog("生成失败：" + (d.error || ""));
@@ -1149,6 +1194,48 @@ async function doScriptGen() {
     $("btnScriptGen").disabled = false;
     $("btnScriptSync").disabled = false;
   }
+}
+
+// ---------- Gist 推送 ----------
+async function saveGistCfg() {
+  const msg = $("gistMsg");
+  try {
+    const r = await fetch("/api/script/gist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: $("gistToken").value.trim(),
+        gistId: $("gistId").value.trim(),
+        filename: $("gistFilename").value.trim(),
+        enabled: $("gistEnabled").checked,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || "保存失败");
+    $("gistToken").value = ""; // 不回显明文
+    msg.textContent = "已保存 ✓";
+    appendScriptLog("Gist 配置已保存" + (d.config.enabled ? "（自动推送已开启）" : ""));
+    refreshScriptStatus();
+  } catch (e) {
+    msg.textContent = "保存失败：" + (e.message || "");
+  }
+  setTimeout(() => { msg.textContent = ""; }, 2500);
+}
+
+async function testGistPush() {
+  const msg = $("gistMsg");
+  msg.textContent = "推送中…";
+  try {
+    const r = await fetch("/api/script/gist/test", { method: "POST" });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || d.reason || "推送失败");
+    msg.textContent = "已推送 ✓";
+    appendScriptLog(`✓ Gist 测试推送成功：${d.url}`);
+  } catch (e) {
+    msg.textContent = "推送失败：" + (e.message || "");
+    appendScriptLog("Gist 测试推送失败：" + (e.message || ""), true);
+  }
+  setTimeout(() => { msg.textContent = ""; }, 3000);
 }
 
 // ---------- 产物 ----------
@@ -1210,6 +1297,8 @@ $("btnDownload").addEventListener("click", downloadOutput);
 $("btnTask").addEventListener("click", toggleTask);
 $("btnScriptSync").addEventListener("click", doScriptSync);
 $("btnScriptGen").addEventListener("click", doScriptGen);
+$("btnGistSave").addEventListener("click", saveGistCfg);
+$("btnGistTest").addEventListener("click", testGistPush);
 $("btnScriptDl").addEventListener("click", async () => {
   const r = await fetch("/api/script/output");
   if (!r.ok) return;

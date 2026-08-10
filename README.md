@@ -67,6 +67,28 @@ http://127.0.0.1:8790/sub
 
 客户端每次点「更新」时，服务端会自动执行：拉最新上游脚本 → 强制拉最新订阅 → 重新生成 YAML → 返回给客户端。正在生成或失败时回退返回上次产物，客户端不中断。订阅元信息（流量/到期/更新间隔）会透传，客户端可正常显示。
 
+## Gist 推送（可选）
+
+生成内容有变化时自动推送到你的 Gist，客户端可直接用 Gist 的 raw URL 作为订阅源（手机/多设备友好）。
+
+### 配置
+
+1. **GitHub Token**：GitHub → Settings → Developer settings → Personal access tokens → 生成（勾选 `gist` 权限）
+2. **Gist ID**：新建或复用任意 Gist，取 URL 中 `gist.github.com/用户名/` 后面那串字符（gist 文件名即产物名，可用默认 `mihomoScript.synced.yaml`）
+3. 页面「高级设置 → 脚本版高级设置 → Gist 推送」填入 Token / Gist ID，点「保存配置」，再点「测试推送」验证
+4. 勾选「生成后自动推送」，之后每次生成内容有变化即自动推送
+
+> Token 仅存本机 `settings.json`（已 .gitignore），**不会上传 Git 仓库**，也不会打进 Docker 镜像（.dockerignore 已排除）。
+
+### 客户端用 Gist
+
+Gist 页面 → Raw 按钮 → 复制 raw URL（`https://gist.githubusercontent.com/<用户名>/<gistId>/raw/<文件名>`），填进 mihomo 客户端即可。客户端按自身更新间隔拉取，无需依赖本机服务常驻。
+
+| 方式 | 依赖 | 适用 |
+|---|---|---|
+| 本机 `/sub` | 服务常驻 | 本机/局域网客户端，点「更新」即现场生成 |
+| Gist raw URL | 生成时自动推送 | 手机/多设备/公网，内容更新后客户端自行拉取 |
+
 ## Docker 部署（NAS / 服务器）
 
 代码推送 GitHub 后，仓库自带的 GitHub Actions 会自动构建镜像并推到 Docker Hub，无需手动构建。
