@@ -28,9 +28,6 @@ jobs:
             exit 1
           fi
 
-      - name: 设置 QEMU（多架构支持，NAS 常见 arm64 可拉取）
-        uses: docker/setup-qemu-action@v3
-
       - name: 设置 Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -45,8 +42,8 @@ jobs:
         with:
           context: .
           push: true
-          # 多架构：NAS 的 x86_64 / arm64 / armv7 都能拉
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          # x86_64 架构（NAS/服务器常见）
+          platforms: linux/amd64
           tags: |
             ${{ steps.dockerhub.outputs.user }}/subforge:latest
             ${{ steps.dockerhub.outputs.user }}/subforge:${{ github.sha }}
