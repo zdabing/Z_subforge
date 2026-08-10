@@ -119,7 +119,7 @@ async function download(urls) {
   for (const url of urls) {
     for (let attempt = 1; attempt <= RETRY; attempt++) {
       try {
-        log(`下载 ${url}（第 ${attempt}/${RETRY} 次尝试）...`);
+        log(`下载 ${url}（第 ${attempt}/${RETRY} 次尝试）`);
         const text = await fetchText(url);
         log("下载成功。");
         return text;
@@ -374,9 +374,10 @@ async function fetchAndParseSubscription() {
   let firstHosts = null;
   let okCount = 0;
   const perUrl = [];
+  const perUrlProxies = []; // 每个订阅各自的节点（原始名），供页面按订阅分组展示
 
   for (const url of urls) {
-    log(`下载订阅 ${url} ...`);
+    log(`下载订阅 ${url}`);
     try {
       const subText = await fetchSubText(url);
       let parsed;
@@ -389,6 +390,7 @@ async function fetchAndParseSubscription() {
       if (proxies.length === 0) {
         throw new Error("订阅内容中未找到 proxies 节点列表");
       }
+      perUrlProxies.push({ url, proxies });
       // 同名节点后覆盖先
       for (const p of proxies) {
         if (!p || typeof p.name !== "string") continue;
@@ -422,15 +424,20 @@ async function fetchAndParseSubscription() {
   // 已含该国旗 / 未标注 / 地区不在脚本地区定义内的节点保持原样
   const flags = getRegionFlags();
   const regionMap = loadNodeRegion();
-  const flaggedProxies = mergedProxies.map((p) => {
+  const flaggedName = (p) => {
     const region = regionMap[p.name];
     const flag = region && flags[region];
-    if (!flag || p.name.startsWith(flag)) return p;
-    return { ...p, name: `${flag} ${p.name}` };
-  });
+    if (!flag || p.name.startsWith(flag)) return p.name;
+    return `${flag} ${p.name}`;
+  };
+  const flaggedProxies = mergedProxies.map((p) =>
+    flaggedName(p) === p.name ? p : { ...p, name: flaggedName(p) },
+  );
   const data = {
     proxies: flaggedProxies,
     names: flaggedProxies.map((p) => p.name),
+    // 按订阅分组（带国旗后的名字），供页面「节点管理」按订阅折叠展示
+    byUrl: perUrlProxies.map((e) => ({ url: e.url, names: e.proxies.map(flaggedName) })),
     urls,
   };
   if (firstDns) data.dns = firstDns;
@@ -588,8 +595,8 @@ async function getNodeList() {
   const urls = getSubscribeUrls();
   if (!nodesInflight) {
     nodesInflight = fetchAndParseSubscription()
-      .then(({ names }) => ({ nodes: names, selection, regions, regionList, urls }))
-      .catch((err) => ({ nodes: [], selection, regions, regionList, urls, error: err.message }))
+      .then(({ names, byUrl }) => ({ nodes: names, byUrl, selection, regions, regionList, urls }))
+      .catch((err) => ({ nodes: [], byUrl: [], selection, regions, regionList, urls, error: err.message }))
       .finally(() => { nodesInflight = null; });
   }
   return nodesInflight;
@@ -613,7 +620,30 @@ function clearSubCache() {
 
 // ---------- 对外操作 ----------
 
-/** 下载上游脚本并保存快照；返回 {ok, sha, options, error?} */
+/**
+ * 查询上游脚本在 GitHub 上的最近一次提交（作者提交时间与 commit sha，供页面显示，
+ * 与快照的「下载时间」区分开）；失败返回 null（不阻塞同步）。
+ */
+async function fetchScriptCommit() {
+  try {
+    const res = await fetch(
+      "https://api.github.com/repos/AIsouler/MyClash/commits?path=Script/mihomoScript.js&per_page=1",
+      { headers: { Accept: "application/vnd.github+json", "User-Agent": "subforge" } },
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const list = await res.json();
+    const c = list && list[0];
+    const date = c && c.commit && c.commit.committer && c.commit.committer.date;
+    if (!date || !c.sha) throw new Error("响应中无提交信息");
+    const message = (c.commit && c.commit.message || "").trim().split("\n")[0]; // 只取首行标题
+    return { sha: c.sha, time: date, message };
+  } catch (err) {
+    log(`查询上游脚本提交信息失败（已忽略）：${err.message}`);
+    return null;
+  }
+}
+
+/** 下载上游脚本并保存快照；返回 {ok, sha, time, options, upstream?, error?} */
 async function syncScript() {
   const source = await download(SCRIPT_URLS);
   if (source === null) {
@@ -622,8 +652,20 @@ async function syncScript() {
   try {
     const { defaults, labels, groups } = extractOptions(source);
     fs.mkdirSync(SCRIPT_DIR, { recursive: true });
+    const now = new Date().toISOString();
+    const meta = { time: now, sha: sha1(source) };
+    const upstream = await fetchScriptCommit();
+    if (upstream) {
+      meta.upstreamCommit = upstream.sha; // GitHub 提交哈希（与内容 SHA 不同）
+      meta.upstreamTime = upstream.time; // 作者提交时间
+      meta.upstreamMessage = upstream.message; // 提交标题（如 feat: 支持添加自定义节点…）
+    }
     fs.writeFileSync(SCRIPT_FILE, source, "utf8");
-    const meta = { time: new Date().toISOString(), sha: sha1(source) };
+    // 保留上次生成时间（generate 写入的 lastGenTime），不因下载脚本被覆盖
+    try {
+      const old = JSON.parse(fs.readFileSync(SCRIPT_META, "utf8"));
+      if (old.lastGenTime) meta.lastGenTime = old.lastGenTime;
+    } catch {}
     fs.writeFileSync(SCRIPT_META, JSON.stringify(meta, null, 2) + "\n", "utf8");
     log("上游脚本已保存到本地快照。");
     const user = loadOptions();
@@ -634,7 +676,7 @@ async function syncScript() {
       value: typeof user[key] === "boolean" ? user[key] : defaultOf(key, def),
       default: def,
     }));
-    return { ok: true, sha: meta.sha, time: meta.time, options };
+    return { ok: true, sha: meta.sha, time: meta.time, options, upstream };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -685,6 +727,14 @@ async function generate() {
       fs.writeFileSync(OUTPUT_FILE, outYaml, "utf8");
       log(`已写入 ${path.basename(OUTPUT_FILE)}（${outYaml.length} 字符）。`);
     }
+
+    // 记录本次生成时间（无论内容是否变化都更新，供页面显示「上次生成」）
+    const genTime = new Date().toISOString();
+    try {
+      const meta = JSON.parse(fs.readFileSync(SCRIPT_META, "utf8"));
+      meta.lastGenTime = genTime;
+      fs.writeFileSync(SCRIPT_META, JSON.stringify(meta, null, 2) + "\n", "utf8");
+    } catch {}
 
     // 内容有变化且启用 Gist 推送时，自动推送到 Gist；失败仅记日志，不阻塞生成
     let gist = null;
@@ -747,15 +797,20 @@ function getStatus() {
   }
   return {
     scriptDownloaded: source !== null,
-    scriptSha: meta ? meta.sha : null,
-    scriptTime: meta ? meta.time : null,
+    scriptSha: meta ? meta.sha : null, // 快照内容 SHA（文件哈希）
+    scriptTime: meta ? meta.time : null, // 快照下载时间
+    upstreamCommit: meta ? meta.upstreamCommit : null, // GitHub 提交哈希
+    upstreamTime: meta ? meta.upstreamTime : null, // 作者提交时间
+    upstreamMessage: meta ? meta.upstreamMessage : null, // 提交标题
+    lastGenTime: meta ? meta.lastGenTime : null, // 最近一次生成配置的时间
     options,
     output,
-    // Gist 推送配置状态（token 只回显布尔，不泄露明文）
+    // Gist 推送配置状态（token 只回显布尔，不泄露明文；gistId 非机密可回显给用户确认）
     gist: (() => {
       const c = loadGistConfig();
       return {
         enabled: c.enabled,
+        gistId: c.gistId,
         hasId: c.gistId.length > 0,
         hasToken: c.token.length > 0,
         filename: c.filename,

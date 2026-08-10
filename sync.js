@@ -97,7 +97,7 @@ async function download() {
   for (const url of UPSTREAM_URLS) {
     for (let attempt = 1; attempt <= RETRY; attempt++) {
       try {
-        log(`下载 ${url}（第 ${attempt}/${RETRY} 次尝试）...`);
+        log(`下载 ${url}（第 ${attempt}/${RETRY} 次尝试）`);
         const res = await fetch(url, { redirect: "follow" });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status} ${res.statusText}`);
