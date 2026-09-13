@@ -282,6 +282,51 @@
   }
   .empty { color: var(--muted); font-size: 13px; padding: 18px; text-align: center; }
 
+  /* ---- 分流组节点勾选：一行 3 个的紧凑卡片 ---- */
+  .flow-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  @media (max-width: 1100px) { .flow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 680px) { .flow-grid { grid-template-columns: 1fr; } }
+  .flow-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    background: var(--card-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 160ms ease, background-color 160ms ease;
+  }
+  .flow-card:hover { border-color: var(--border-strong); }
+  .flow-card.active { border-color: var(--accent); background: var(--accent-soft); }
+  .flow-card .desc { flex: 1; min-width: 0; }
+  .flow-card .desc small {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .flow-card .flow-dot { flex-shrink: 0; font-size: 10px; color: var(--muted); }
+  .flow-card.active .flow-dot { color: var(--accent); }
+  /* 展开的详情区：独占一整行 */
+  .node-group.open {
+    margin-top: 10px;
+    background: var(--card-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 10px 14px;
+    animation: fade-in 250ms var(--ease-out);
+  }
+
   /* ---- 节点勾选排序 ---- */
   .sel-sort { border: 1px dashed var(--border-strong); border-radius: 10px; padding: 6px; background: #f6f8fb; }
   .sel-item {
@@ -954,19 +999,23 @@ function renderScriptNodeSel() {
   } else if (nodeSelState.nodes.length === 0) {
     html += `<div class="empty">订阅中暂无节点</div>`;
   } else {
+    html += `<div class="flow-grid">`;
     for (const g of flowGroups) {
       const count = (nodeSelState.selection[g] || []).length;
-      const open = nodeSelOpenGroup === g ? "1" : "";
-      const openAttr = nodeSelOpenGroup === g ? "" : "closed";
+      const active = nodeSelOpenGroup === g;
       html += `
-      <div style="margin:6px 0">
-        <div class="switch-row" data-group="${escapeHtml(g)}" role="button" tabindex="0"
-             style="cursor:pointer;user-select:none" title="点击展开/收起节点勾选">
-          <span class="desc">${escapeHtml(g)}<small>${count > 0 ? `已勾选 ${count} 个节点` : "未勾选（用默认策略组列表）"}</small></span>
-          <span style="font-size:11px;color:var(--muted)">${count > 0 ? "●" : "○"} ${open ? "▲" : "▼"}</span>
-        </div>
-        <div id="group-${cssEscape(g)}" class="node-group" ${openAttr}></div>
+      <div class="flow-card${active ? " active" : ""}" data-group="${escapeHtml(g)}" role="button" tabindex="0"
+           title="点击展开/收起节点勾选">
+        <span class="desc">${escapeHtml(g)}<small>${count > 0 ? `已勾选 ${count} 个节点` : "未勾选（用默认列表）"}</small></span>
+        <span class="flow-dot">${count > 0 ? "●" : "○"}</span>
       </div>`;
+    }
+    html += `</div>`;
+    // 展开的详情区紧跟网格之后，独占一整行
+    for (const g of flowGroups) {
+      if (nodeSelOpenGroup === g) {
+        html += `<div id="group-${cssEscape(g)}" class="node-group open"></div>`;
+      }
     }
     html += `<div class="hint" style="margin-top:6px">提示：勾选结果下次点「生成配置」时生效</div>`;
   }
@@ -976,6 +1025,12 @@ function renderScriptNodeSel() {
   if (btn) btn.addEventListener("click", refreshScriptNodes);
   wrap.querySelectorAll("[data-group]").forEach((row) => {
     row.addEventListener("click", () => toggleScriptNodeGroup(row.dataset.group));
+    row.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        toggleScriptNodeGroup(row.dataset.group);
+      }
+    });
   });
   for (const g of flowGroups) renderScriptNodeGroup(g);
 }
@@ -989,7 +1044,7 @@ function renderScriptNodeGroup(g) {
   }
   const selected = nodeSelState.selection[g] || [];
   const selectedSet = new Set(selected);
-  let html = `<div style="padding:4px 0 6px 14px">`;
+  let html = `<div>`;
 
   // 已勾选节点：可拖动排序（顺序即生成时策略组的节点顺序）
   html += `<div class="hint" style="margin:4px 0 6px">已勾选节点（拖动调整顺序）</div>`;
