@@ -249,6 +249,36 @@
   .sub-status.err { color: var(--red); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sub-card .btn-del { flex-shrink: 0; padding: 6px 10px; }
 
+  /* ---- 归属地标注：一行 3 个的紧凑网格 ---- */
+  .region-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px 10px;
+  }
+  @media (max-width: 1100px) { .region-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 680px) { .region-grid { grid-template-columns: 1fr; } }
+  .region-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px 5px 10px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font-size: 12.5px;
+    transition: border-color 160ms ease;
+  }
+  .region-item:hover { border-color: var(--border-strong); }
+  .region-item.annotated { border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+  .region-item .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .region-item select { flex-shrink: 0; max-width: 108px; padding: 4px 6px; font-size: 12px; }
+
   /* ---- 统计卡 ---- */
   .stats-grid {
     display: grid;
@@ -930,13 +960,14 @@ function renderScriptNodeRegion() {
       <details class="collapse-block" data-suburl="${escapeHtml(key)}" ${openSubRegions.has(key) ? "open" : ""} style="margin-top:0;margin-bottom:10px">
         <summary>${escapeHtml(display)}<span class="hint" style="font-weight:400">${g.names.length} 个节点</span></summary>
         <div class="body">`;
+      html += `<div class="region-grid">`;
       for (const n of g.names) {
         const original = stripFlag(n, regionList);
         const val = cur[original] || "";
         html += `
-        <div class="switch-row">
-          <span class="desc" style="word-break:break-all">${escapeHtml(n)}<small>${val ? "已标注：" + escapeHtml(val) : "未标注 → 归入「其他节点」"}</small></span>
-          <select data-region="${escapeHtml(original)}" style="max-width:130px">
+        <div class="region-item${val ? " annotated" : ""}" title="${escapeHtml(n)}${val ? " · 已标注：" + escapeHtml(val) : " · 未标注 → 归入「其他节点」"}">
+          <span class="name">${escapeHtml(n)}</span>
+          <select data-region="${escapeHtml(original)}">
             ${regionOpts.replace(`<option value="${escapeHtml(val)}">`, `<option value="${escapeHtml(val)}" selected>`)}
           </select>
         </div>`;
