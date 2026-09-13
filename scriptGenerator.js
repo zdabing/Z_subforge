@@ -356,8 +356,10 @@ function getSubscribeUrls() {
 }
 
 /**
- * 下载并解析订阅，返回 { proxies, names, urls, dns?, hosts? }；URL 列表不变时带 60s 缓存。
- * 多个订阅节点合并：同名节点后覆盖先（避免 mihomo proxies 重名报错）；
+ * 下载并解析订阅，返回 { proxies, names, urls, subs, byUrl, statuses, dns?, hosts? }；
+ * URL 列表不变时带 60s 缓存。
+ * subs：每个订阅独立的数据（带国旗后的节点 + 自带 dns/hosts），供「各订阅分别执行脚本再合并」；
+ * proxies/names：全部节点同名覆盖合并，仅供页面展示兼容。
  * 单条订阅下载/解析失败 → 跳过该条并记日志，其余继续；全部失败才抛错。
  */
 async function fetchAndParseSubscription() {
@@ -392,7 +394,7 @@ async function fetchAndParseSubscription() {
       if (proxies.length === 0) {
         throw new Error("订阅内容中未找到 proxies 节点列表");
       }
-      perUrlProxies.push({ url, proxies });
+      perUrlProxies.push({ url, proxies, dns: parsed.dns || null, hosts: parsed.hosts || null });
       // 同名节点后覆盖先
       for (const p of proxies) {
         if (!p || typeof p.name !== "string") continue;
@@ -440,6 +442,16 @@ async function fetchAndParseSubscription() {
     names: flaggedProxies.map((p) => p.name),
     // 按订阅分组（带国旗后的名字），供页面「节点管理」按订阅折叠展示
     byUrl: perUrlProxies.map((e) => ({ url: e.url, names: e.proxies.map(flaggedName) })),
+    // 每个订阅独立数据（带国旗后的节点 + 订阅自带 dns/hosts），供「各订阅分别执行脚本再合并产物」
+    subs: perUrlProxies.map((e) => {
+      const flagged = e.proxies.map((p) => (flaggedName(p) === p.name ? p : { ...p, name: flaggedName(p) }));
+      const sub = { url: e.url, proxies: flagged };
+      if (e.dns) sub.dns = e.dns;
+      if (e.hosts) sub.hosts = e.hosts;
+      return sub;
+    }),
+    // 每条订阅的拉取结果（节点数或失败原因），供页面按订阅显示状态
+    statuses: perUrl.map((p) => (p.count !== undefined ? { url: p.url, count: p.count } : { url: p.url, error: p.error })),
     urls,
   };
   if (firstDns) data.dns = firstDns;
@@ -478,6 +490,127 @@ function applyKeepAlive(result) {
     g.lazy = false;
     if (typeof g.interval === "number" && g.interval > 0) g.interval = 120;
   }
+}
+
+// ---------- 多订阅产物合并 ----------
+
+/** 结构化比较（脚本产物均为纯 JSON 数据，可直接序列化比较） */
+function sameProxy(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * 合并多次脚本执行结果：每个订阅分别执行 main() 后，把完整产物合并为一份配置。
+ *  - proxies：顺序拼接。完全相同的节点（上游自建/直连等固定产物）去重复用；
+ *    重名但内容不同的节点加序号后缀保留（如「香港 01 2」），并同步改写
+ *    dialer-proxy 交叉引用 —— 保证 mihomo 不因重名报错、节点数不丢失（50+50=100）。
+ *  - proxy-groups：按组名合并，proxies 列表取并集（保持顺序）。地区组只在有节点时
+ *    才生成，某订阅独有的地区组整组追加，父组引用随并集自动补全。
+ *  - dns：合并 proxy-server-nameserver-policy（各机场私有 DNS 分域名解析）与
+ *    fake-ip-filter 并集（各订阅节点服务器的 fake-ip 放行条目）。
+ *  - 其余顶层字段（rules / tun / ntp 等，仅取决于开关）：取第一个产物。
+ */
+function mergeMainResults(results) {
+  const list = (Array.isArray(results) ? results : []).filter(Boolean);
+  if (list.length === 0) throw new Error("无可合并的脚本产物");
+  if (list.length === 1) return list[0];
+
+  const mergedProxies = [];
+  const taken = new Set(); // 已占用的节点名
+  const perResult = list.map((r) => {
+    const nameMap = new Map(); // 该产物内节点名 → 合并后节点名
+    const proxies = [];
+    for (const p of Array.isArray(r.proxies) ? r.proxies : []) {
+      if (!p || typeof p.name !== "string") continue;
+      const name = p.name;
+      if (taken.has(name)) {
+        const existing = mergedProxies.find((x) => x.name === name);
+        if (sameProxy(existing, p)) {
+          nameMap.set(name, name); // 完全相同 → 复用已有节点
+          continue;
+        }
+        let n = 2;
+        while (taken.has(`${name} ${n}`)) n++;
+        const renamed = { ...p, name: `${name} ${n}` };
+        taken.add(renamed.name);
+        mergedProxies.push(renamed);
+        proxies.push(renamed);
+        nameMap.set(name, renamed.name);
+      } else {
+        taken.add(name);
+        mergedProxies.push(p);
+        proxies.push(p);
+        nameMap.set(name, name);
+      }
+    }
+    return { result: r, nameMap, proxies };
+  });
+
+  // 重名改名的目标节点被 dialer-proxy 引用时同步改写（组名引用不改写）
+  for (const { result, nameMap, proxies } of perResult) {
+    const groupNames = new Set((result["proxy-groups"] || []).map((g) => g && g.name));
+    for (const p of proxies) {
+      const t = p["dialer-proxy"];
+      if (typeof t === "string" && !groupNames.has(t) && nameMap.has(t) && nameMap.get(t) !== t) {
+        p["dialer-proxy"] = nameMap.get(t);
+      }
+    }
+  }
+
+  const groups = (list[0]["proxy-groups"] || []).map((g) => ({ ...g, proxies: [...(g.proxies || [])] }));
+  const groupIdx = new Map(groups.map((g, i) => [g.name, i]));
+  for (let i = 1; i < perResult.length; i++) {
+    const { result, nameMap } = perResult[i];
+    const groupNames = new Set((result["proxy-groups"] || []).map((g) => g && g.name));
+    for (const g of result["proxy-groups"] || []) {
+      // 名字在组名集合里的引用（嵌套策略组）不改写；仅重名节点需映射到新名字
+      const mapped = (g.proxies || []).map((n) =>
+        !groupNames.has(n) && nameMap.has(n) ? nameMap.get(n) : n,
+      );
+      const at = groupIdx.get(g.name);
+      if (at === undefined) {
+        groupIdx.set(g.name, groups.length);
+        groups.push({ ...g, proxies: mapped });
+      } else {
+        const have = new Set(groups[at].proxies);
+        for (const n of mapped) {
+          if (!have.has(n)) {
+            groups[at].proxies.push(n);
+            have.add(n);
+          }
+        }
+      }
+    }
+  }
+
+  const merged = { ...list[0], proxies: mergedProxies, "proxy-groups": groups };
+
+  // dns：合并各订阅的私有 DNS 策略与 fake-ip-filter（节点服务器域名各不相同）
+  const dns = { ...(list[0].dns || {}) };
+  const fakeIpFilter = [...(dns["fake-ip-filter"] || [])];
+  const fakeIpSet = new Set(fakeIpFilter);
+  const nsPolicy = { ...(dns["proxy-server-nameserver-policy"] || {}) };
+  for (let i = 1; i < list.length; i++) {
+    const d = list[i].dns || {};
+    for (const f of d["fake-ip-filter"] || []) {
+      if (!fakeIpSet.has(f)) {
+        fakeIpFilter.push(f);
+        fakeIpSet.add(f);
+      }
+    }
+    Object.assign(nsPolicy, d["proxy-server-nameserver-policy"] || {});
+  }
+  if (fakeIpFilter.length > 0) dns["fake-ip-filter"] = fakeIpFilter;
+  if (Object.keys(nsPolicy).length > 0) dns["proxy-server-nameserver-policy"] = nsPolicy;
+  if (list[0].dns) merged.dns = dns;
+
+  // 其余顶层键：后续产物多出的键补上（正常情况下各产物键一致）
+  for (let i = 1; i < list.length; i++) {
+    for (const [k, v] of Object.entries(list[i])) {
+      if (!(k in merged)) merged[k] = v;
+    }
+  }
+  return merged;
 }
 
 /**
@@ -597,8 +730,8 @@ async function getNodeList() {
   const urls = getSubscribeUrls();
   if (!nodesInflight) {
     nodesInflight = fetchAndParseSubscription()
-      .then(({ names, byUrl }) => ({ nodes: names, byUrl, selection, regions, regionList, urls }))
-      .catch((err) => ({ nodes: [], byUrl: [], selection, regions, regionList, urls, error: err.message }))
+      .then(({ names, byUrl, statuses }) => ({ nodes: names, byUrl, statuses, selection, regions, regionList, urls }))
+      .catch((err) => ({ nodes: [], byUrl: [], statuses: [], selection, regions, regionList, urls, error: err.message }))
       .finally(() => { nodesInflight = null; });
   }
   return nodesInflight;
@@ -699,17 +832,29 @@ async function generate() {
     const { source: injected } = injectOptions(source, user);
     const { main } = executeScript(injected);
 
-    // 订阅 → 节点
-    const { proxies, dns, hosts, names } = await fetchAndParseSubscription();
+    // 订阅 → 每个订阅独立数据（节点带国旗 + 订阅自带 dns/hosts）
+    const { subs, names, byUrl } = await fetchAndParseSubscription();
 
-    const config = { proxies };
-    if (dns) config.dns = dns;
-    if (hosts) config.hosts = hosts;
-
-    const result = main(config);
-    if (!result || !Array.isArray(result.proxies) || !Array.isArray(result["proxy-groups"])) {
-      throw new Error("脚本执行结果异常：缺少 proxies 或 proxy-groups");
+    // 每个订阅分别执行一次脚本处理（开关已注入），再把产物合并为一份配置：
+    // 如 50 节点 + 50 节点 → 处理后合并为 100 节点，而不是先合并节点再处理（同名会被去重丢失）
+    const results = [];
+    const perSubLog = [];
+    for (const sub of subs) {
+      const config = { proxies: sub.proxies };
+      if (sub.dns) config.dns = sub.dns;
+      if (sub.hosts) config.hosts = sub.hosts;
+      const r = main(config);
+      if (!r || !Array.isArray(r.proxies) || !Array.isArray(r["proxy-groups"])) {
+        throw new Error("脚本执行结果异常：缺少 proxies 或 proxy-groups");
+      }
+      results.push(r);
+      perSubLog.push(`${sub.proxies.length} 节点`);
     }
+    if (subs.length > 1) {
+      log(`已按订阅分别执行脚本（${perSubLog.join(" + ")}），合并产物。`);
+    }
+
+    const result = mergeMainResults(results);
 
     // 后处理：按用户勾选替换分流策略组节点列表
     const replacedGroups = applyNodeSelection(result, loadNodeSelection(), names);
@@ -752,7 +897,7 @@ async function generate() {
     }
 
     log(
-      `脚本版生成完成：${result.proxies.length} 节点 / ${result["proxy-groups"].length} 策略组 / ${result.rules.length} 规则。`,
+      `脚本版生成完成：${subs.length} 个订阅分别处理 → 合并 ${result.proxies.length} 节点 / ${result["proxy-groups"].length} 策略组 / ${result.rules.length} 规则。`,
     );
     return {
       ok: true,
@@ -760,9 +905,11 @@ async function generate() {
       proxies: result.proxies.length,
       groups: result["proxy-groups"].length,
       rules: (result.rules || []).length,
+      subsCount: subs.length,
       outputLen: outYaml.length,
       time: new Date().toISOString(),
       nodes: names,
+      byUrl,
       replacedGroups,
       gist,
     };
@@ -845,6 +992,7 @@ module.exports = {
   executeScript,
   download,
   fetchAndParseSubscription,
+  mergeMainResults,
   loadOptions,
   saveOptions,
   loadGistConfig,

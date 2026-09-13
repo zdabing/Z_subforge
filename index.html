@@ -5,99 +5,333 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>subforge · 订阅配置生成</title>
 <style>
+  /* ---- 设计令牌：缓动曲线遵循 emil-design-eng（入场 ease-out、屏内移动 ease-in-out、UI 一律 <300ms） ---- */
   :root {
-    --bg: #0f1420;
-    --card: #171f2e;
-    --card-2: #1d2738;
-    --border: #2a3648;
-    --text: #dbe4f0;
-    --muted: #8b98ab;
-    --accent: #4c9aff;
-    --green: #3ecf8e;
-    --red: #ff5f6d;
-    --yellow: #ffc46b;
+    --bg: #0b0e14;
+    --card: #12161f;
+    --card-2: #1a2030;
+    --border: #232b3d;
+    --border-strong: #2f3a52;
+    --text: #e2e8f2;
+    --muted: #8a94a8;
+    --accent: #5b9dff;
+    --accent-soft: rgba(91, 157, 255, 0.12);
+    --green: #34d399;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.40);
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
     --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+    interpolate-size: allow-keywords; /* details 高度过渡（支持的浏览器平滑展开，其余瞬时） */
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { color-scheme: dark; }
   body {
-    background: var(--bg);
+    background:
+      radial-gradient(1200px 500px at 50% -10%, rgba(91, 157, 255, 0.07), transparent 60%),
+      var(--bg);
     color: var(--text);
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-    padding: 20px;
-    max-width: 1280px;
+    padding: 24px 20px 40px;
+    max-width: 1180px;
     margin: 0 auto;
+    line-height: 1.5;
   }
+  ::selection { background: var(--accent-soft); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- 头部 ---- */
   header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 12px;
-    margin-bottom: 18px;
+    margin-bottom: 22px;
   }
-  h1 { font-size: 20px; font-weight: 600; }
-  h1 small { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
+  h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+  h1 small { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 10px; }
+  .header-chips { display: flex; gap: 8px; align-items: center; }
   .badge {
     padding: 4px 12px;
     border-radius: 999px;
     font-size: 12px;
     font-weight: 600;
     border: 1px solid var(--border);
+    color: var(--muted);
+    background: var(--card);
+    transition: color 200ms ease, border-color 200ms ease;
   }
-  .badge.idle { color: var(--muted); }
-  .badge.running { color: var(--yellow); border-color: var(--yellow); animation: pulse 1.2s infinite; }
-  @keyframes pulse { 50% { opacity: 0.5; } }
+  .badge.running { color: var(--yellow); border-color: color-mix(in srgb, var(--yellow) 45%, transparent); }
 
-  .cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-  .card {
+  /* ---- 区块：入场 stagger（30-80ms），只动 transform/opacity ---- */
+  .section, details.advanced {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 16px;
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-sm);
+    animation: rise 420ms var(--ease-out) backwards;
   }
-  .card .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-  .card .value {
-    font-family: var(--mono);
-    font-size: 13px;
-    word-break: break-all;
-  }
-  .card .value.warn { color: var(--yellow); }
-  .card .value.ok { color: var(--green); }
-  .card .value.err { color: var(--red); }
+  .section:nth-of-type(2) { animation-delay: 60ms; }
+  .section:nth-of-type(3) { animation-delay: 120ms; }
+  .section:nth-of-type(4) { animation-delay: 180ms; }
+  details.advanced { animation-delay: 240ms; padding: 14px 16px; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 
-  .panel {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 16px;
-    margin-bottom: 16px;
-  }
-  .panel h2 {
+  .section-title {
     font-size: 14px;
     font-weight: 600;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
   }
-  .panel h2 .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
+  .section-title .hint, .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
 
-  /* 核心面板醒目 */
-  .panel.core { border-color: var(--accent); }
+  /* ---- 按钮：按压反馈 scale(0.97)，过渡只写具体属性 ---- */
+  button {
+    background: var(--card-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    padding: 8px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: transform 160ms var(--ease-out), background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    button:hover:not(:disabled) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--card-2)); }
+  }
+  button:active:not(:disabled) { transform: scale(0.97); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0a1020; font-weight: 600; }
+  button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, white); }
+  button.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
+  button.sm { padding: 4px 12px; font-size: 12px; }
 
-  /* 高级设置折叠区 */
-  details.advanced {
+  /* ---- 开关行 ---- */
+  .switch-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 4px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .switch-row:last-child { border-bottom: none; }
+  .switch-row .desc { flex: 1; font-size: 13px; }
+  .switch-row .desc small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+
+  /* ---- 生成开关：一行 3 个 ---- */
+  .options-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  @media (max-width: 900px) { .options-grid { grid-template-columns: 1fr; } }
+  .options-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    background: var(--card-2);
     border: 1px solid var(--border);
     border-radius: 10px;
-    background: var(--card);
-    padding: 14px 16px;
-    margin-bottom: 16px;
+    font-size: 13px;
+    transition: border-color 160ms ease;
   }
+  @media (hover: hover) and (pointer: fine) {
+    .options-item:hover { border-color: var(--border-strong); }
+  }
+  .options-item .desc { flex: 1; min-width: 0; }
+  .options-item .desc small {
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .options-item .switch { flex-shrink: 0; }
+
+  /* ---- 输入框 ---- */
+  .var-input {
+    width: 100%;
+    background: #0d1119;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 8px 11px;
+    font-size: 12.5px;
+    font-family: var(--mono);
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+  }
+  .var-input::placeholder { color: #56617a; }
+  .var-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  select {
+    background: #0d1119;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 9px;
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: border-color 160ms ease;
+  }
+  select:focus { outline: none; border-color: var(--accent); }
+
+  /* ---- 开关滑块 ---- */
+  .switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border-strong);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background-color 200ms ease;
+  }
+  .slider::before {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 3px;
+    top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: var(--shadow-sm);
+    transition: transform 200ms var(--ease-out);
+  }
+  .switch input:checked + .slider { background: var(--accent); }
+  .switch input:checked + .slider::before { transform: translateX(18px); }
+
+  /* ---- 订阅卡片（多订阅管理主体） ---- */
+  .sub-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--card-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    transition: border-color 160ms ease, opacity 250ms var(--ease-out), transform 250ms var(--ease-out);
+    animation: rise 300ms var(--ease-out) backwards;
+  }
+  .sub-card:hover { border-color: var(--border-strong); }
+  .sub-card.removing { opacity: 0; transform: translateX(12px) scale(0.98); }
+  .sub-idx {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    font-family: var(--mono);
+    color: var(--muted);
+    background: #0d1119;
+    border: 1px solid var(--border);
+    transition: color 200ms ease, border-color 200ms ease, background-color 200ms ease;
+  }
+  .sub-card.primary .sub-idx { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
+  .sub-card .var-input { flex: 1; }
+  .sub-status { flex-shrink: 0; font-size: 12px; color: var(--muted); min-width: 70px; text-align: right; }
+  .sub-status.ok { color: var(--green); }
+  .sub-status.err { color: var(--red); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sub-card .btn-del { flex-shrink: 0; padding: 6px 10px; }
+
+  /* ---- 统计卡 ---- */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .stat {
+    background: var(--card-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .stat .value { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+  .stat .value.ok { color: var(--green); }
+  .stat .value.err { color: var(--red); }
+
+  /* ---- 日志 ---- */
+  pre {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    background: #0d1119;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    max-height: 260px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #c3cedd;
+  }
+  .empty { color: var(--muted); font-size: 13px; padding: 18px; text-align: center; }
+
+  /* ---- 节点勾选排序 ---- */
+  .sel-sort { border: 1px dashed var(--border-strong); border-radius: 10px; padding: 6px; background: #0d1119; }
+  .sel-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    margin: 3px 0;
+    background: var(--card-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: grab;
+    user-select: none;
+    transition: border-color 160ms ease, opacity 160ms ease;
+  }
+  .sel-item:hover { border-color: var(--accent); }
+  .sel-item.dragging { opacity: 0.45; border-color: var(--accent); }
+  .sel-grip { color: var(--muted); cursor: grab; }
+  .sel-x { color: var(--muted); cursor: pointer; padding: 0 4px; }
+  .sel-x:hover { color: var(--red); }
+  .task-status { font-size: 13px; color: var(--muted); }
+  .task-status b { color: var(--text); }
+
+  /* ---- 折叠块：::details-content 高度过渡（渐进增强）+ 内容淡入 ---- */
+  details.collapse-block {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-top: 10px;
+    background: var(--card-2);
+  }
+  details.collapse-block summary {
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 11px 14px;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border-radius: 12px;
+    transition: color 160ms ease;
+  }
+  details.collapse-block summary::before { content: "▸"; color: var(--muted); transition: transform 200ms var(--ease-out); }
+  details.collapse-block[open] summary::before { transform: rotate(90deg); }
+  details.collapse-block summary:hover { color: var(--accent); }
+  details.collapse-block .body { padding: 0 14px 14px; animation: fade-in 250ms var(--ease-out); }
+  @keyframes fade-in { from { opacity: 0; } }
   details.advanced summary {
     cursor: pointer;
     font-size: 14px;
@@ -110,278 +344,80 @@
     align-items: center;
     gap: 8px;
   }
-  details.advanced summary::before { content: "▸"; color: var(--muted); transition: transform 0.15s; }
+  details.advanced summary::before { content: "▸"; color: var(--muted); transition: transform 200ms var(--ease-out); }
   details.advanced[open] summary::before { transform: rotate(90deg); }
   details.advanced summary:hover { color: var(--accent); }
-  details.advanced summary .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
 
-  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
-  button {
-    background: var(--card-2);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 8px 16px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-  }
-  button:hover:not(:disabled) { border-color: var(--accent); }
-  button:disabled { opacity: 0.45; cursor: not-allowed; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
-  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
-  button.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
-
-  .switch-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 8px 4px;
-    border-bottom: 1px dashed var(--border);
-  }
-  .switch-row:last-child { border-bottom: none; }
-  .switch-row .desc { flex: 1; font-size: 13px; }
-  .switch-row .desc small { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
-
-  /* 生成开关：一行 3 个 */
-  .options-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-  }
-  @media (max-width: 900px) { .options-grid { grid-template-columns: 1fr; } }
-  .options-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    background: var(--card-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    font-size: 13px;
-  }
-  .options-item:hover { border-color: var(--accent); }
-  .options-item .desc { flex: 1; min-width: 0; }
-  .options-item .desc small {
-    display: block;
-    color: var(--muted);
-    font-size: 11px;
-    margin-top: 2px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .options-item .switch { flex-shrink: 0; }
-  .var-input {
-    width: 100%;
-    margin-top: 6px;
-    background: #0b1018;
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 7px 10px;
-    font-size: 12px;
-    font-family: var(--mono);
-    box-sizing: border-box;
-  }
-  .var-input:focus { outline: none; border-color: var(--accent); }
-  .var-saved { color: var(--green); font-size: 11px; margin-left: 8px; opacity: 0; transition: opacity 0.4s; }
-  .var-saved.show { opacity: 1; }
-  .switch {
-    position: relative;
-    width: 40px;
-    height: 22px;
-    flex-shrink: 0;
-  }
-  .switch input { opacity: 0; width: 0; height: 0; }
-  .slider {
-    position: absolute;
-    inset: 0;
-    background: var(--border);
-    border-radius: 999px;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  .slider::before {
-    content: "";
-    position: absolute;
-    width: 16px;
-    height: 16px;
-    left: 3px;
-    top: 3px;
-    background: #fff;
-    border-radius: 50%;
-    transition: transform 0.2s;
-  }
-  .switch input:checked + .slider { background: var(--accent); }
-  .switch input:checked + .slider::before { transform: translateX(18px); }
-
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
-
-  pre {
-    font-family: var(--mono);
-    font-size: 12px;
-    line-height: 1.55;
-    background: #0b1018;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px;
-    max-height: 420px;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  #log { color: #c3cedd; }
-  .log-time { color: var(--muted); }
-  .log-ok { color: var(--green); }
-  .log-err { color: var(--red); }
-
-  .diff { font-family: var(--mono); font-size: 12px; line-height: 1.5; max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: #0b1018; }
-  .diff .line { display: flex; gap: 10px; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
-  .diff .ln { color: #3d4c63; width: 34px; text-align: right; flex-shrink: 0; user-select: none; }
-  .diff .same { color: #8b98ab; }
-  .diff .add { background: rgba(62, 207, 142, 0.10); color: var(--green); }
-  .diff .del { background: rgba(255, 95, 109, 0.10); color: var(--red); }
-  .diff .mark { flex-shrink: 0; width: 14px; user-select: none; }
-
-  .empty { color: var(--muted); font-size: 13px; padding: 20px; text-align: center; }
-
-  .sel-sort { border: 1px dashed var(--border); border-radius: 8px; padding: 6px; background: #0b1018; }
-  .sel-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    margin: 3px 0;
-    background: var(--card-2);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 13px;
-    cursor: grab;
-    user-select: none;
-  }
-  .sel-item:hover { border-color: var(--accent); }
-  .sel-item.dragging { opacity: 0.45; border-color: var(--accent); }
-  .sel-grip { color: var(--muted); cursor: grab; }
-  .sel-grip:hover { color: var(--accent); }
-  .sel-x { color: var(--muted); cursor: pointer; padding: 0 4px; }
-  .sel-x:hover { color: var(--red); }
-  .task-status { font-size: 13px; color: var(--muted); }
-  .task-status b { color: var(--text); }
-  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 24px; }
-
-  /* ---- 分区（section） ---- */
-  .section {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px 20px;
-    margin-bottom: 16px;
-  }
-  .section-title {
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-  .section-title .hint { font-size: 12px; color: var(--muted); font-weight: 400; }
-  .sub-block {
-    background: #0b1018;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 14px;
-  }
-  .sub-title {
-    font-size: 12px;
-    color: var(--muted);
-    font-weight: 600;
-    margin-bottom: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .gap { margin-top: 12px; }
   .gap-lg { margin-top: 20px; }
   .grow { flex: 1; min-width: 260px; }
   code.url {
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 12.5px;
     color: var(--accent);
     word-break: break-all;
     user-select: all;
   }
-  .status-good { color: var(--green); }
-  .status-mid { color: var(--yellow); }
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
-  }
-  .stat {
-    background: var(--card-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 14px;
-  }
-  .stat .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-  .stat .value { font-family: var(--mono); font-size: 13px; word-break: break-all; }
-  .stat .value.ok { color: var(--green); }
-  .stat .value.err { color: var(--red); }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 26px; }
 
-  /* 可折叠小块（如生成配置区内的「同步到 Gist」） */
-  .collapse-block {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    margin-top: 12px;
-    background: #0b1018;
-  }
-  .collapse-block summary {
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 10px 14px;
-    user-select: none;
-    list-style: none;
+  /* ---- Toast（右下角，transitions 而非 keyframes，可中断；出场比入场快） ---- */
+  #toasts {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
     gap: 8px;
+    z-index: 100;
+    max-width: min(420px, calc(100vw - 40px));
   }
-  .collapse-block summary::before { content: "▸"; color: var(--muted); transition: transform 0.15s; }
-  .collapse-block[open] summary::before { transform: rotate(90deg); }
-  .collapse-block summary:hover { color: var(--accent); }
-  .collapse-block .body { padding: 0 14px 14px; }
+  .toast {
+    background: var(--card-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    box-shadow: var(--shadow-md);
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    transition: transform 280ms var(--ease-out), opacity 280ms var(--ease-out);
+  }
+  @starting-style { .toast { opacity: 0; transform: translateY(8px) scale(0.97); } }
+  .toast.out { opacity: 0; transform: translateY(4px) scale(0.97); transition-duration: 180ms; }
+  .toast.ok { border-color: color-mix(in srgb, var(--green) 45%, transparent); }
+  .toast.err { border-color: color-mix(in srgb, var(--red) 50%, transparent); }
+
+  input[type="checkbox"] { accent-color: var(--accent); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>subforge<small>订阅 → mihomoScript.js → YAML</small></h1>
+  <div class="header-chips">
+    <span class="badge" id="busyBadge">空闲</span>
+    <span class="badge" id="gistBadge">Gist 未配置</span>
+  </div>
 </header>
 
-<!-- ============ ① 订阅链接 ============ -->
+<!-- ============ ① 订阅管理 ============ -->
 <div class="section">
-  <div class="section-title">订阅链接<span class="hint">机场订阅地址，用于生成配置</span></div>
-  <div class="row">
-    <input id="coreSubInput" class="var-input grow" type="text" style="margin-top:0"
-      placeholder="https://机场.com/sub/xxxx" spellcheck="false">
-    <button id="btnCoreSubSave">保存</button>
-    <span class="task-status" id="coreSubMsg"></span>
+  <div class="section-title">订阅管理<span class="hint">多个订阅各自执行脚本处理后自动合并产物 · 第一个为主订阅</span></div>
+  <div id="subList"></div>
+  <div class="row gap">
+    <button id="btnSubAdd">+ 添加订阅</button>
+    <button id="btnSubSave" class="primary">保存订阅</button>
+    <span class="hint">保存后自动拉取各订阅的节点列表</span>
+    <span class="task-status" id="subMsg" style="flex:1;text-align:right"></span>
   </div>
-
-  <!-- 多订阅管理（可折叠） -->
-  <details class="collapse-block">
-    <summary>多订阅管理<span class="hint" style="font-size:12px;color:var(--muted);font-weight:400">多个订阅的节点合并用于生成 · 第一个即上方订阅链接</span></summary>
-    <div class="body">
-      <div id="scriptSubs"></div>
-    </div>
-  </details>
 </div>
 
 <!-- ============ ② 生成配置 ============ -->
@@ -392,17 +428,19 @@
     <button id="btnScriptDl" disabled>下载配置</button>
     <span class="task-status" style="white-space:nowrap">上次生成：<b id="coreLastGen" style="color:var(--text);font-family:var(--mono)">—</b></span>
     <span class="task-status" id="coreStat">尚未生成</span>
-    <span style="flex:1;min-width:240px;display:flex;align-items:center;gap:8px;background:#0b1018;border:1px solid var(--border);border-radius:8px;padding:6px 12px" title="mihomo 客户端订阅地址：填入客户端，点「更新」即自动重新生成最新配置">
+  </div>
+  <div class="row gap">
+    <span style="flex:1;min-width:240px;display:flex;align-items:center;gap:8px;background:var(--card-2);border:1px solid var(--border);border-radius:10px;padding:7px 12px" title="mihomo 客户端订阅地址：填入客户端，点「更新」即自动重新生成最新配置">
       <span class="hint" style="flex-shrink:0">订阅地址</span>
       <code class="url" id="subUrl" style="flex:1"></code>
-      <button id="btnCopySub" style="padding:2px 10px;font-size:11px;flex-shrink:0">复制</button>
+      <button id="btnCopySub" class="sm" style="flex-shrink:0">复制</button>
       <span class="task-status" id="copySubMsg" style="flex-shrink:0"></span>
     </span>
   </div>
 
   <!-- 同步到 Gist（可折叠） -->
   <details class="collapse-block">
-    <summary>同步到 Gist<span class="hint" style="font-size:12px;color:var(--muted);font-weight:400">生成内容有变化时自动推送</span><span class="task-status" id="gistStatus"></span></summary>
+    <summary>同步到 Gist<span class="hint" style="font-weight:400">生成内容有变化时自动推送</span><span class="task-status" id="gistStatus"></span></summary>
     <div class="body">
       <div class="row">
         <input class="var-input" type="password" id="gistToken" placeholder="GitHub Token（需 gist 权限）" style="flex:1;min-width:240px">
@@ -410,16 +448,16 @@
         <input class="var-input" type="text" id="gistFilename" placeholder="文件名" style="width:190px">
       </div>
       <div class="row gap">
-        <button id="btnGistSave" style="padding:4px 14px;font-size:12px">保存设置</button>
-        <button id="btnGistTest" style="padding:4px 14px;font-size:12px">测试推送</button>
+        <button id="btnGistSave" class="sm">保存设置</button>
+        <button id="btnGistTest" class="sm">测试推送</button>
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:var(--muted)">
-          <input type="checkbox" id="gistEnabled" style="accent-color:var(--accent)"> 生成后自动推送
+          <input type="checkbox" id="gistEnabled"> 生成后自动推送
         </label>
         <span class="task-status" id="gistMsg"></span>
       </div>
       <div class="hint" style="margin-top:8px;font-size:11px">
         用法：Token 在 GitHub Settings → Developer settings → Personal access tokens 生成（勾选 gist 权限）。
-        Gist 可新建任意一个（也可用已有的），更新时按文件名覆盖对应文件。
+        Gist 可新建任意一个（也可用已有的），更新时按文件名覆盖对应文件；文件名填 clash 时 raw 地址即 /raw/clash。
       </div>
     </div>
   </details>
@@ -454,8 +492,8 @@
     </div>
   </div>
 
-  <div class="section-title gap-lg">生成日志 <button id="btnClearScriptLog" style="padding:2px 10px;font-size:11px">清空</button></div>
-  <pre id="scriptLog" style="margin-top:4px;max-height:220px">尚未生成配置。填入订阅链接后点「生成配置」。</pre>
+  <div class="section-title gap-lg">生成日志 <button id="btnClearScriptLog" class="sm">清空</button></div>
+  <pre id="scriptLog" style="margin-top:4px">尚未生成配置。填入订阅链接后点「生成配置」。</pre>
 </div>
 
 <!-- ============ 高级设置（折叠） ============ -->
@@ -463,8 +501,11 @@
   <summary>高级设置<span class="hint">生成开关</span></summary>
 
   <div style="margin-top:14px">
-    <div class="sub-block">
-      <div class="sub-title">生成开关<span class="hint">分流策略、地区分组等选项</span></div>
+    <div style="background:var(--card-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">
+        <span style="font-size:12px;color:var(--muted);font-weight:600">生成开关</span>
+        <span class="hint">分流策略、地区分组等选项</span>
+      </div>
       <div id="scriptOptions"></div>
     </div>
   </div>
@@ -473,6 +514,8 @@
 <footer>
   本地服务 · 零外部依赖 · 数据仅在本机流转 · 关闭本窗口即停止服务
 </footer>
+
+<div id="toasts" aria-live="polite"></div>
 
 <script>
 "use strict";
@@ -510,6 +553,22 @@ function cssEscape(s) {
   return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => "_" + c.charCodeAt(0).toString(16));
 }
 
+// ---------- Toast（替代散落的状态文字；CSS transitions 可中断，出场比入场快） ----------
+function toast(text, type) {
+  const wrap = $("toasts");
+  const el = document.createElement("div");
+  el.className = "toast" + (type ? " " + type : "");
+  el.textContent = text;
+  wrap.appendChild(el);
+  // 出场：transition 结束或兜底超时后移除
+  const remove = () => {
+    el.classList.add("out");
+    setTimeout(() => el.remove(), 220);
+  };
+  setTimeout(remove, type === "err" ? 4200 : 2800);
+  el.addEventListener("click", remove);
+}
+
 // ---------- 脚本版（动态生成） ----------
 const scriptGroups = ["基础策略", "分流策略", "生成配置"];
 
@@ -517,6 +576,9 @@ async function refreshScriptStatus() {
   try {
     const r = await fetch("/api/script/status");
     const s = await r.json();
+
+    $("busyBadge").textContent = s.busy ? "运行中…" : "空闲";
+    $("busyBadge").classList.toggle("running", !!s.busy);
 
     $("stScriptSha").textContent = s.scriptDownloaded ? s.scriptSha || "?" : "未下载";
     $("stScriptSha").className = "value " + (s.scriptDownloaded ? "ok" : "err");
@@ -541,10 +603,12 @@ async function refreshScriptStatus() {
       $("gistToken").placeholder = s.gist.hasToken ? "Token 已保存（不回显，如需更换请填写新 Token）" : "GitHub Personal Access Token（需 gist 权限）";
       $("gistFilename").value = s.gist.filename || "clash";
       $("gistEnabled").checked = s.gist.enabled;
-      $("gistStatus").textContent = s.gist.configured
+      const configured = s.gist.configured;
+      $("gistBadge").textContent = configured ? "Gist 已配置" : "Gist 未配置";
+      $("gistStatus").textContent = configured
         ? "✓ 已配置（Token 已保存，不回显）"
         : (s.gist.hasId || s.gist.hasToken ? "未完成（缺一项）" : "未配置");
-      $("gistStatus").style.color = s.gist.configured ? "var(--green)" : "";
+      $("gistStatus").style.color = configured ? "var(--green)" : "";
     }
 
     if (s.options) renderScriptOptions(s.options);
@@ -595,41 +659,58 @@ async function saveScriptOption(cb) {
     appendScriptLog(`开关「${cb.dataset.optkey}」已${cb.checked ? "开启" : "关闭"}`);
   } catch {
     cb.checked = !cb.checked;
-    appendScriptLog("保存开关失败", true);
+    toast("保存开关失败", "err");
   }
 }
 
-// ---------- 订阅管理（多订阅） ----------
+// ---------- 订阅管理（多订阅卡片） ----------
 let subUrls = []; // 页面编辑中的 URL 列表
-let subSaved = []; // 服务端已保存的列表
+let subSaved = []; // 服务端已保存的列表（statuses 按此对齐）
 
 // 订阅列表由 refreshScriptNodes 的同一份 /api/script/nodes 数据渲染，避免重复请求导致订阅重复下载
 function renderScriptSubs() {
-  const wrap = $("scriptSubs");
-  const placeholder = escapeHtml("https://机场.com/sub/xxxx/mihomo-nodes.yaml");
+  const wrap = $("subList");
+  const placeholder = escapeHtml("https://机场.com/sub/xxxx");
+  const statuses = nodeSelState.statuses || [];
+  // 状态按 URL 对齐（statuses 与服务端保存的 urls 顺序一致）
+  const statusOf = (url, i) => {
+    const byUrl = statuses.find((s) => s && s.url === url);
+    if (byUrl !== undefined) return byUrl;
+    return statuses[i];
+  };
+  if (subUrls.length === 0) {
+    wrap.innerHTML = `<div class="empty" style="border:1px dashed var(--border);border-radius:12px">尚无订阅，点击下方「+ 添加订阅」</div>`;
+    return;
+  }
   let html = "";
   subUrls.forEach((u, i) => {
+    const st = statusOf(u, i) || {};
+    let statusHtml = `<span class="sub-status">未拉取</span>`;
+    if (st.count !== undefined) statusHtml = `<span class="sub-status ok">${st.count} 节点</span>`;
+    else if (st.error) statusHtml = `<span class="sub-status err" title="${escapeHtml(st.error)}">${escapeHtml(st.error)}</span>`;
     html += `
-    <div class="switch-row">
+    <div class="sub-card${i === 0 ? " primary" : ""}">
+      <span class="sub-idx" title="${i === 0 ? "主订阅" : "订阅 " + (i + 1)}">${i + 1}</span>
       <input class="var-input" type="text" data-subidx="${i}" value="${escapeHtml(u)}"
-        placeholder="${placeholder}" style="flex:1">
-      <button data-subdel="${i}" style="margin-left:8px;padding:2px 10px;font-size:11px">删除</button>
+        placeholder="${placeholder}" spellcheck="false">
+      ${statusHtml}
+      <button class="btn-del" data-subdel="${i}" title="删除该订阅">✕</button>
     </div>`;
   });
-  html += `
-  <div style="display:flex;gap:8px;margin-top:8px">
-    <button id="btnSubAdd" style="padding:4px 14px;font-size:12px">+ 添加订阅</button>
-    <button id="btnSubSave" class="primary" style="padding:4px 14px;font-size:12px">保存</button>
-    <span class="task-status" id="subMsg" style="align-self:center"></span>
-  </div>`;
   wrap.innerHTML = html;
-  $("btnSubAdd").addEventListener("click", () => { subUrls.push(""); renderScriptSubs(); });
-  $("btnSubSave").addEventListener("click", saveScriptSubs);
   wrap.querySelectorAll("input[data-subidx]").forEach((inp) => {
     inp.addEventListener("input", () => { subUrls[Number(inp.dataset.subidx)] = inp.value; });
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") saveScriptSubs(); });
   });
   wrap.querySelectorAll("button[data-subdel]").forEach((btn) => {
-    btn.addEventListener("click", () => { subUrls.splice(Number(btn.dataset.subdel), 1); renderScriptSubs(); });
+    btn.addEventListener("click", () => {
+      const card = btn.closest(".sub-card");
+      card.classList.add("removing"); // 先播退场动画再删（transitions 可中断）
+      setTimeout(() => {
+        subUrls.splice(Number(btn.dataset.subdel), 1);
+        renderScriptSubs();
+      }, 200);
+    });
   });
 }
 
@@ -645,40 +726,13 @@ async function saveScriptSubs() {
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || "保存失败");
     subSaved = [...urls];
+    subUrls = [...urls];
     appendScriptLog(`已保存 ${urls.length} 个订阅链接`);
-    if (msg) msg.textContent = "已保存 ✓";
+    toast(`已保存 ${urls.length} 个订阅`, "ok");
     await refreshScriptNodes(); // 节点列表按新订阅重新加载
   } catch (e) {
     appendScriptLog("保存订阅失败：" + (e.message || ""), true);
-    if (msg) msg.textContent = "保存失败";
-  }
-}
-
-// ---------- 核心面板：保存订阅（单条，与多订阅管理互通） ----------
-async function saveCoreSub() {
-  const inp = $("coreSubInput");
-  const msg = $("coreSubMsg");
-  const val = (inp.value || "").trim();
-  if (!val) {
-    msg.textContent = "请填写订阅链接";
-    return;
-  }
-  msg.textContent = "保存中…";
-  try {
-    const r = await fetch("/api/script/subscriptions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ urls: [val] }),
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || "保存失败");
-    subSaved = [val];
-    subUrls = [val];
-    renderScriptSubs();
-    msg.textContent = "已保存 ✓";
-    await refreshScriptNodes();
-  } catch (e) {
-    msg.textContent = "保存失败：" + (e.message || "");
+    toast("保存订阅失败：" + (e.message || ""), "err");
   }
 }
 
@@ -697,6 +751,7 @@ async function doCoreGen() {
       const d = await r.json();
       if (!d.ok) {
         appendScriptLog("下载上游脚本失败：" + (d.error || ""), true);
+        toast("下载上游脚本失败", "err");
         refreshScriptStatus();
         return;
       }
@@ -705,7 +760,8 @@ async function doCoreGen() {
     const r = await fetch("/api/script/generate", { method: "POST" });
     const d = await r.json();
     if (d.ok) {
-      appendScriptLog(`✓ 生成成功：${d.proxies} 节点 / ${d.groups} 策略组 / ${d.rules} 规则${d.changed ? "" : "（无变化）"}`);
+      const subPart = d.subsCount > 1 ? `（${d.subsCount} 个订阅分别处理合并）` : "";
+      appendScriptLog(`✓ 生成成功：${d.proxies} 节点${subPart} / ${d.groups} 策略组 / ${d.rules} 规则${d.changed ? "" : "（无变化）"}`);
       if (d.replacedGroups && d.replacedGroups.length) {
         appendScriptLog("已应用节点勾选：" + d.replacedGroups.join("、"));
       }
@@ -714,15 +770,18 @@ async function doCoreGen() {
       }
       stat.textContent = `${d.proxies} 节点 · ${d.groups} 策略组 · ${d.rules} 规则 · ${d.changed ? "已更新" : "无变化"}`;
       $("coreLastGen").textContent = fmtTime(d.time);
+      toast(`生成成功：${d.proxies} 节点${subPart}`, "ok");
       syncNodesAfterGenerate(d);
     } else {
       appendScriptLog("生成失败：" + (d.error || ""), true);
       stat.textContent = "生成失败";
+      toast("生成失败：" + (d.error || ""), "err");
     }
     refreshScriptStatus();
     await loadScriptLog();
   } catch (e) {
     appendScriptLog("生成异常：" + e.message, true);
+    toast("生成异常：" + e.message, "err");
   } finally {
     btn.disabled = false;
     refreshScriptStatus();
@@ -731,7 +790,7 @@ async function doCoreGen() {
 
 // ---------- 分流组节点选择 ----------
 const flowGroups = []; // 分流策略组名（来自开关渲染，保持脚本顺序）
-let nodeSelState = { nodes: [], byUrl: [], selection: {}, regions: {}, regionList: [], error: null };
+let nodeSelState = { nodes: [], byUrl: [], statuses: [], selection: {}, regions: {}, regionList: [], error: null };
 let nodeSelLoaded = false;
 let nodeSelOpenGroup = null;
 
@@ -742,6 +801,7 @@ async function refreshScriptNodes() {
     nodeSelState = {
       nodes: Array.isArray(d.nodes) ? d.nodes : [],
       byUrl: Array.isArray(d.byUrl) ? d.byUrl : [],
+      statuses: Array.isArray(d.statuses) ? d.statuses : [],
       selection: d.selection && typeof d.selection === "object" ? d.selection : {},
       regions: d.regions && typeof d.regions === "object" ? d.regions : {},
       regionList: Array.isArray(d.regionList) ? d.regionList : [],
@@ -754,8 +814,6 @@ async function refreshScriptNodes() {
     subSaved = Array.isArray(d.urls) ? d.urls : [];
     subUrls = [...subSaved];
     renderScriptSubs();
-    const core = $("coreSubInput");
-    if (core) core.value = subSaved[0] || "";
   } catch {
     nodeSelState.error = "无法连接服务";
     nodeSelState.byUrl = [];
@@ -795,7 +853,7 @@ function renderScriptNodeRegion() {
   let html = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
     <span style="font-size:13px;font-weight:600">节点归属地标注
       <span class="hint">标注后生成时归入对应地区组（如 🇺🇸 美国），不标的进「其他节点」</span></span>
-    <button id="btnScriptRegionRefresh" style="padding:2px 10px;font-size:11px">刷新节点</button>
+    <button id="btnScriptRegionRefresh" class="sm">刷新节点</button>
   </div>`;
   if (!nodeSelLoaded) {
     html += `<div class="empty">正在加载订阅节点…</div>`;
@@ -808,7 +866,7 @@ function renderScriptNodeRegion() {
       const display = g.url ? g.url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") : "默认";
       html += `
       <details class="collapse-block" style="margin-top:0;margin-bottom:10px">
-        <summary>${escapeHtml(display)}<span class="hint" style="font-size:12px;color:var(--muted);font-weight:400">${g.names.length} 个节点</span></summary>
+        <summary>${escapeHtml(display)}<span class="hint" style="font-weight:400">${g.names.length} 个节点</span></summary>
         <div class="body">`;
       for (const n of g.names) {
         const original = stripFlag(n, regionList);
@@ -823,7 +881,7 @@ function renderScriptNodeRegion() {
       }
       html += `</div></details>`;
     }
-    html += `<div style="font-size:12px;color:var(--muted)">提示：标注结果下次点「生成配置」时生效</div>`;
+    html += `<div class="hint" style="margin-top:6px">提示：标注结果下次点「生成配置」时生效</div>`;
   }
   wrap.innerHTML = html;
   const btn = $("btnScriptRegionRefresh");
@@ -852,7 +910,7 @@ async function saveScriptNodeRegion(original, select) {
     await refreshScriptNodes(); // 节点名变为带国旗，勾选区自动同步
   } catch (e) {
     select.value = prev;
-    appendScriptLog("保存归属地失败：" + (e.message || ""), true);
+    toast("保存归属地失败：" + (e.message || ""), "err");
   } finally {
     regionEditBusy = false;
   }
@@ -860,11 +918,10 @@ async function saveScriptNodeRegion(original, select) {
 
 function renderScriptNodeSel() {
   const wrap = $("scriptNodeSel");
-  const groupList = flowGroups.filter((g) => nodeSelState.selection[g] && nodeSelState.selection[g].length);
   let html = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
     <span style="font-size:13px;font-weight:600">分流组节点勾选
       <span class="hint">勾选订阅节点替换到对应分流策略组（不勾选则用默认列表）· 已勾选支持拖动排序</span></span>
-    <button id="btnScriptNodeRefresh" style="padding:2px 10px;font-size:11px">刷新节点</button>
+    <button id="btnScriptNodeRefresh" class="sm">刷新节点</button>
   </div>`;
   if (!nodeSelLoaded) {
     html += `<div class="empty">正在加载订阅节点…</div>`;
@@ -887,7 +944,7 @@ function renderScriptNodeSel() {
         <div id="group-${cssEscape(g)}" class="node-group" ${openAttr}></div>
       </div>`;
     }
-    html += `<div style="font-size:12px;color:var(--muted);margin-top:6px">提示：勾选结果下次点「生成配置」时生效</div>`;
+    html += `<div class="hint" style="margin-top:6px">提示：勾选结果下次点「生成配置」时生效</div>`;
   }
   wrap.innerHTML = html;
 
@@ -911,7 +968,7 @@ function renderScriptNodeGroup(g) {
   let html = `<div style="padding:4px 0 6px 14px">`;
 
   // 已勾选节点：可拖动排序（顺序即生成时策略组的节点顺序）
-  html += `<div style="font-size:12px;color:var(--muted);margin:4px 0 6px">已勾选节点（拖动调整顺序）</div>`;
+  html += `<div class="hint" style="margin:4px 0 6px">已勾选节点（拖动调整顺序）</div>`;
   if (selected.length === 0) {
     html += `<div class="empty" style="padding:4px 0 8px;text-align:left;font-size:12px">尚未勾选，从下方列表勾选节点</div>`;
   } else {
@@ -928,7 +985,7 @@ function renderScriptNodeGroup(g) {
   }
 
   // 全部节点：勾选 / 取消勾选
-  html += `<div style="font-size:12px;color:var(--muted);margin:8px 0 4px">全部节点</div>`;
+  html += `<div class="hint" style="margin:8px 0 4px">全部节点</div>`;
   for (const n of nodeSelState.nodes) {
     html += `
     <label style="display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;font-size:13px">
@@ -1012,7 +1069,7 @@ async function saveScriptSelection(g, list, logText) {
     if (logText) appendScriptLog(logText);
   } catch (e) {
     renderScriptNodeSel();
-    appendScriptLog("保存失败：" + (e.message || ""), true);
+    toast("保存失败：" + (e.message || ""), "err");
   }
 }
 
@@ -1027,14 +1084,17 @@ function toggleScriptNodeGroup(g) {
   renderScriptNodeSel();
 }
 
-// 生成成功后用返回的节点列表刷新勾选界面
+// 生成成功后用返回的节点列表刷新勾选界面（byUrl 可用时保持按订阅分组展示）
 function syncNodesAfterGenerate(d) {
   if (d && Array.isArray(d.nodes)) {
     nodeSelState.nodes = d.nodes;
-    nodeSelState.byUrl = []; // 生成后按订阅分组信息不再可靠，退回整列表展示
+    if (Array.isArray(d.byUrl) && d.byUrl.length) {
+      nodeSelState.byUrl = d.byUrl;
+    }
     nodeSelState.error = null;
     nodeSelLoaded = true;
     renderScriptNodeSel();
+    renderScriptNodeRegion();
   }
 }
 
@@ -1067,7 +1127,12 @@ async function doScriptSync() {
     const r = await fetch("/api/script/sync", { method: "POST" });
     const d = await r.json();
     appendScriptLog(d.ok ? "✓ 上游脚本已下载（SHA " + (d.sha || "?") + "）" : "下载失败：" + (d.error || ""));
-    if (d.ok) refreshScriptStatus();
+    if (d.ok) {
+      toast("上游脚本已下载", "ok");
+      refreshScriptStatus();
+    } else {
+      toast("下载失败：" + (d.error || ""), "err");
+    }
     await loadScriptLog();
   } catch (e) {
     appendScriptLog("下载脚本异常：" + e.message, true);
@@ -1095,6 +1160,7 @@ async function saveGistCfg() {
     $("gistToken").value = ""; // 不回显明文
     msg.textContent = "已保存 ✓";
     appendScriptLog("Gist 配置已保存" + (d.config.enabled ? "（自动推送已开启）" : ""));
+    toast("Gist 配置已保存", "ok");
     refreshScriptStatus();
   } catch (e) {
     msg.textContent = "保存失败：" + (e.message || "");
@@ -1111,9 +1177,10 @@ async function testGistPush() {
     if (!r.ok) throw new Error(d.error || d.reason || "推送失败");
     msg.textContent = "已推送 ✓";
     appendScriptLog(`✓ Gist 测试推送成功：${d.url}`);
+    toast("Gist 测试推送成功", "ok");
   } catch (e) {
     msg.textContent = "推送失败：" + (e.message || "");
-    appendScriptLog("Gist 测试推送失败：" + (e.message || ""), true);
+    toast("Gist 测试推送失败：" + (e.message || ""), "err");
   }
   setTimeout(() => { msg.textContent = ""; }, 3000);
 }
@@ -1136,7 +1203,7 @@ async function saveGistEnabled() {
     refreshScriptStatus();
   } catch (e) {
     cb.checked = !cb.checked; // 失败回滚
-    appendScriptLog("保存 Gist 开关失败：" + (e.message || ""), true);
+    toast("保存 Gist 开关失败：" + (e.message || ""), "err");
   }
 }
 
@@ -1153,9 +1220,9 @@ $("btnCopySub").addEventListener("click", async () => {
   }
   setTimeout(() => { msg.textContent = ""; }, 2000);
 });
+$("btnSubAdd").addEventListener("click", () => { subUrls.push(""); renderScriptSubs(); });
+$("btnSubSave").addEventListener("click", saveScriptSubs);
 $("btnCoreGen").addEventListener("click", doCoreGen);
-$("btnCoreSubSave").addEventListener("click", saveCoreSub);
-$("coreSubInput").addEventListener("keydown", (e) => { if (e.key === "Enter") saveCoreSub(); });
 $("btnScriptSync").addEventListener("click", doScriptSync);
 $("btnGistSave").addEventListener("click", saveGistCfg);
 $("btnGistTest").addEventListener("click", testGistPush);

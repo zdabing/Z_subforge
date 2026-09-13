@@ -18,3 +18,7 @@ script/
 
 # 日志
 npm-debug.log*
+
+# AI skills 安装产生的 junction 链接（skills.sh 生成，指回 .agents/skills）
+.claude/
+agent/
