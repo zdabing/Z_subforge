@@ -5,32 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>subforge · 订阅配置生成</title>
 <style>
-  /* ---- 设计令牌：缓动曲线遵循 emil-design-eng（入场 ease-out、屏内移动 ease-in-out、UI 一律 <300ms） ---- */
+  /* ---- 设计令牌：浅色清爽主题；缓动曲线遵循 emil-design-eng（入场 ease-out、UI 一律 <300ms） ---- */
   :root {
-    --bg: #0b0e14;
-    --card: #12161f;
-    --card-2: #1a2030;
-    --border: #232b3d;
-    --border-strong: #2f3a52;
-    --text: #e2e8f2;
-    --muted: #8a94a8;
-    --accent: #5b9dff;
-    --accent-soft: rgba(91, 157, 255, 0.12);
-    --green: #34d399;
-    --red: #f87171;
-    --yellow: #fbbf24;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
-    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.40);
+    --bg: #f4f6fa;
+    --card: #ffffff;
+    --card-2: #f7f9fc;
+    --border: #e5e9f1;
+    --border-strong: #ccd5e3;
+    --text: #1a2233;
+    --muted: #68748a;
+    --accent: #3b82f6;
+    --accent-soft: rgba(59, 130, 246, 0.10);
+    --green: #16a34a;
+    --red: #dc2626;
+    --yellow: #b45309;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.10);
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
     --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
     --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
     interpolate-size: allow-keywords; /* details 高度过渡（支持的浏览器平滑展开，其余瞬时） */
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { color-scheme: dark; }
+  html { color-scheme: light; }
   body {
     background:
-      radial-gradient(1200px 500px at 50% -10%, rgba(91, 157, 255, 0.07), transparent 60%),
+      radial-gradient(1200px 500px at 50% -10%, rgba(59, 130, 246, 0.06), transparent 60%),
       var(--bg);
     color: var(--text);
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
@@ -110,7 +110,7 @@
   }
   button:active:not(:disabled) { transform: scale(0.97); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #0a1020; font-weight: 600; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #ffffff; font-weight: 600; }
   button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, white); }
   button.danger:hover:not(:disabled) { border-color: var(--red); color: var(--red); }
   button.sm { padding: 4px 12px; font-size: 12px; }
@@ -163,21 +163,21 @@
   /* ---- 输入框 ---- */
   .var-input {
     width: 100%;
-    background: #0d1119;
+    background: #ffffff;
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 9px;
     padding: 8px 11px;
     font-size: 12.5px;
     font-family: var(--mono);
     transition: border-color 160ms ease, box-shadow 160ms ease;
   }
-  .var-input::placeholder { color: #56617a; }
+  .var-input::placeholder { color: #9aa4b8; }
   .var-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   select {
-    background: #0d1119;
+    background: #ffffff;
     color: var(--text);
-    border: 1px solid var(--border);
+    border: 1px solid var(--border-strong);
     border-radius: 8px;
     padding: 6px 9px;
     font-size: 12.5px;
@@ -238,7 +238,7 @@
     font-weight: 700;
     font-family: var(--mono);
     color: var(--muted);
-    background: #0d1119;
+    background: #eef2f8;
     border: 1px solid var(--border);
     transition: color 200ms ease, border-color 200ms ease, background-color 200ms ease;
   }
@@ -270,7 +270,7 @@
     font-family: var(--mono);
     font-size: 12px;
     line-height: 1.55;
-    background: #0d1119;
+    background: #f6f8fb;
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 12px;
@@ -278,12 +278,12 @@
     overflow: auto;
     white-space: pre-wrap;
     word-break: break-all;
-    color: #c3cedd;
+    color: #3a4356;
   }
   .empty { color: var(--muted); font-size: 13px; padding: 18px; text-align: center; }
 
   /* ---- 节点勾选排序 ---- */
-  .sel-sort { border: 1px dashed var(--border-strong); border-radius: 10px; padding: 6px; background: #0d1119; }
+  .sel-sort { border: 1px dashed var(--border-strong); border-radius: 10px; padding: 6px; background: #f6f8fb; }
   .sel-item {
     display: flex;
     align-items: center;
@@ -373,7 +373,7 @@
     max-width: min(420px, calc(100vw - 40px));
   }
   .toast {
-    background: var(--card-2);
+    background: #ffffff;
     border: 1px solid var(--border-strong);
     border-radius: 12px;
     padding: 10px 14px;

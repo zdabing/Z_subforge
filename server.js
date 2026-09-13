@@ -142,7 +142,10 @@ async function route(req, res, url) {
         sendJson(res, 500, { error: "无法读取 index.html" });
         return;
       }
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store", // 页面更新后浏览器不得用缓存旧版
+      });
       res.end(html);
     });
     return;
