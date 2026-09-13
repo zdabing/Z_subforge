@@ -829,6 +829,16 @@ async function refreshScriptNodes() {
 // ---------- 节点归属地标注 ----------
 let regionEditBusy = false;
 
+// 已展开的订阅折叠块（key=订阅 URL）：保存标注后区块会重渲染，展开状态必须保留，
+// 否则每设置一个节点整块就收回去。同时写入 localStorage，刷新页面也保持。
+let openSubRegions = new Set();
+try {
+  for (const u of JSON.parse(localStorage.getItem("subforge.openSubRegions") || "[]")) openSubRegions.add(u);
+} catch {}
+function persistOpenSubRegions() {
+  try { localStorage.setItem("subforge.openSubRegions", JSON.stringify([...openSubRegions])); } catch {}
+}
+
 // 去掉节点名里的国旗前缀，还原为订阅原名（用于归属地映射的 key）
 function stripFlag(name, regionList) {
   for (const { flag } of regionList || []) {
@@ -841,6 +851,12 @@ function stripFlag(name, regionList) {
 
 function renderScriptNodeRegion() {
   const wrap = $("scriptNodeRegion");
+  // 先记录当前 DOM 里已展开的订阅块（本次重渲染后恢复）
+  wrap.querySelectorAll("details[data-suburl]").forEach((d) => {
+    if (d.open) openSubRegions.add(d.dataset.suburl);
+    else openSubRegions.delete(d.dataset.suburl);
+  });
+  persistOpenSubRegions();
   const regionList = nodeSelState.regionList || [];
   const cur = nodeSelState.regions || {};
   const regionOpts = `<option value="">未标注</option>` + regionList
@@ -864,8 +880,9 @@ function renderScriptNodeRegion() {
   } else {
     for (const g of groups) {
       const display = g.url ? g.url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") : "默认";
+      const key = g.url || "";
       html += `
-      <details class="collapse-block" style="margin-top:0;margin-bottom:10px">
+      <details class="collapse-block" data-suburl="${escapeHtml(key)}" ${openSubRegions.has(key) ? "open" : ""} style="margin-top:0;margin-bottom:10px">
         <summary>${escapeHtml(display)}<span class="hint" style="font-weight:400">${g.names.length} 个节点</span></summary>
         <div class="body">`;
       for (const n of g.names) {
@@ -886,6 +903,13 @@ function renderScriptNodeRegion() {
   wrap.innerHTML = html;
   const btn = $("btnScriptRegionRefresh");
   if (btn) btn.addEventListener("click", refreshScriptNodes);
+  wrap.querySelectorAll("details[data-suburl]").forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (d.open) openSubRegions.add(d.dataset.suburl);
+      else openSubRegions.delete(d.dataset.suburl);
+      persistOpenSubRegions();
+    });
+  });
   wrap.querySelectorAll("select[data-region]").forEach((sel) => {
     sel.addEventListener("change", () => saveScriptNodeRegion(sel.dataset.region, sel));
   });
