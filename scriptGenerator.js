@@ -276,7 +276,7 @@ function loadGistConfig() {
   return {
     token: typeof s.gistToken === "string" ? s.gistToken : "",
     gistId: typeof s.gistId === "string" ? s.gistId : "",
-    filename: typeof s.gistFilename === "string" && s.gistFilename ? s.gistFilename : "mihomoScript.synced.yaml",
+    filename: typeof s.gistFilename === "string" && s.gistFilename ? s.gistFilename : "clash",
     enabled: s.gistEnabled === true,
   };
 }
@@ -291,7 +291,7 @@ function saveGistConfig(cfg) {
   const prev = {
     token: typeof s.gistToken === "string" ? s.gistToken : "",
     gistId: typeof s.gistId === "string" ? s.gistId : "",
-    filename: typeof s.gistFilename === "string" && s.gistFilename ? s.gistFilename : "mihomoScript.synced.yaml",
+    filename: typeof s.gistFilename === "string" && s.gistFilename ? s.gistFilename : "clash",
   };
   const token = typeof cfg.token === "string" ? cfg.token.trim() : prev.token;
   const gistId = typeof cfg.gistId === "string" ? cfg.gistId.trim() : prev.gistId;
@@ -337,7 +337,9 @@ async function pushToGist(yamlText) {
       return { ok: false, error: msg };
     }
     const g = await res.json();
-    return { ok: true, url: g.html_url, gistId: cfg.gistId };
+    // 客户端需要直接读取文件内容，返回 raw URL（文件名为 clash 时即 /raw/clash）。
+    const rawUrl = g.files && g.files[cfg.filename] && g.files[cfg.filename].raw_url;
+    return { ok: true, url: rawUrl || `https://gist.githubusercontent.com/${g.owner?.login || ""}/${cfg.gistId}/raw/${encodeURIComponent(cfg.filename)}`, gistId: cfg.gistId };
   } catch (err) {
     return { ok: false, error: err && err.message ? err.message : String(err) };
   }

@@ -74,7 +74,7 @@ http://127.0.0.1:8790/sub
 ### 配置
 
 1. **GitHub Token**：GitHub → Settings → Developer settings → Personal access tokens → 生成（勾选 `gist` 权限）
-2. **Gist ID**：新建或复用任意 Gist，取 URL 中 `gist.github.com/用户名/` 后面那串字符（gist 文件名即产物名，可用默认 `mihomoScript.synced.yaml`）
+2. **Gist ID**：新建或复用任意 Gist，取 URL 中 `gist.github.com/用户名/` 后面那串字符；文件名填写 `clash`，这样 raw 地址就是 `/raw/clash`
 3. 页面「高级设置 → 脚本版高级设置 → Gist 推送」填入 Token / Gist ID，点「保存配置」，再点「测试推送」验证
 4. 勾选「生成后自动推送」，之后每次生成内容有变化即自动推送
 
@@ -82,7 +82,7 @@ http://127.0.0.1:8790/sub
 
 ### 客户端用 Gist
 
-Gist 页面 → Raw 按钮 → 复制 raw URL（`https://gist.githubusercontent.com/<用户名>/<gistId>/raw/<文件名>`），填进 mihomo 客户端即可。客户端按自身更新间隔拉取，无需依赖本机服务常驻。
+推送成功后日志会直接显示 raw URL（`https://gist.githubusercontent.com/<用户名>/<gistId>/raw/<文件名>`）；文件名为 `clash` 时即为 `/raw/clash`，填进 mihomo 客户端即可。客户端按自身更新间隔拉取，无需依赖本机服务常驻。
 
 | 方式 | 依赖 | 适用 |
 |---|---|---|

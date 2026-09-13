@@ -562,7 +562,9 @@ async function routeScript(req, res, url) {
       }
       res.writeHead(200, {
         "Content-Type": "text/plain; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${scriptGen.OUTPUT_FILE}"`,
+        // 响应头只能放下载文件名，不能放可能含中文的本地绝对路径；
+        // 否则 Node 会抛 ERR_INVALID_CHAR 并导致服务进程退出。
+        "Content-Disposition": `attachment; filename="${path.basename(scriptGen.OUTPUT_FILE)}"`,
       });
       res.end(text);
     });

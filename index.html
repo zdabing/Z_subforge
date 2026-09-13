@@ -539,7 +539,7 @@ async function refreshScriptStatus() {
     if (s.gist) {
       $("gistId").value = s.gist.gistId || "";
       $("gistToken").placeholder = s.gist.hasToken ? "Token 已保存（不回显，如需更换请填写新 Token）" : "GitHub Personal Access Token（需 gist 权限）";
-      $("gistFilename").value = s.gist.filename || "mihomoScript.synced.yaml";
+      $("gistFilename").value = s.gist.filename || "clash";
       $("gistEnabled").checked = s.gist.enabled;
       $("gistStatus").textContent = s.gist.configured
         ? "✓ 已配置（Token 已保存，不回显）"
