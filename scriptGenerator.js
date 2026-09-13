@@ -44,9 +44,9 @@ const settingsSync = require("./sync.js");
 const SUB_CACHE_TTL = 60_000;
 let subCache = { time: 0, key: null, data: null };
 
-// 最近一次拉取订阅时捕获的元信息（HTTP 响应头），供 /sub 端点透传给 mihomo 客户端：
-// mihomo 客户端据此显示「流量/到期」等订阅信息
-let subInfo = { userinfo: null, updateInterval: null, title: null };
+// 最近一次拉取订阅时捕获的元信息（HTTP 响应头），按订阅 URL 记录（getSubInfo 聚合后供 /sub
+// 端点透传给 mihomo 客户端：多订阅时流量求和、到期取最早，客户端才能显示准确的总量）
+const subInfoMap = new Map(); // url -> { userinfo, updateInterval, title }
 
 let lastLog = { time: null, lines: [] };
 function log(...args) {
@@ -84,7 +84,7 @@ async function fetchText(url) {
 }
 
 /** 拉取订阅并捕获元信息响应头（Subscription-Userinfo / Profile-Update-Interval），
- *  供 /sub 端点透传给 mihomo 客户端显示流量、到期、更新间隔 */
+ *  按订阅 URL 记录，聚合逻辑见 getSubInfo */
 async function fetchSubText(url) {
   const res = await fetch(url, {
     redirect: "follow",
@@ -96,22 +96,77 @@ async function fetchSubText(url) {
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   const text = await res.text();
   if (!text || !text.trim()) throw new Error("下载内容为空");
-  const userinfo = res.headers.get("subscription-userinfo");
-  const updateInterval = res.headers.get("profile-update-interval");
-  if (userinfo) subInfo.userinfo = userinfo;
-  if (updateInterval) subInfo.updateInterval = updateInterval;
-  // 机场显示名：优先取 SUB_TITLE 环境变量（容器部署可自定义，如 NAS 上设置 SUB_TITLE=MyAirport），
-  // 否则按订阅域名主名称推断（如 sub.example.com → example）
+  // 机场显示名：按订阅域名主名称推断（如 sub.example.com → example）；
+  // SUB_TITLE 环境变量（容器部署可自定义，如 NAS 上设置 SUB_TITLE=MyAirport）在聚合时统一覆盖
+  let title = null;
   try {
-    const name = process.env.SUB_TITLE || new URL(url).hostname.replace(/^sub\./, "").split(".")[0];
-    if (name) subInfo.title = name;
+    title = new URL(url).hostname.replace(/^sub\./, "").split(".")[0] || null;
   } catch {}
+  subInfoMap.set(url, {
+    userinfo: res.headers.get("subscription-userinfo"),
+    updateInterval: res.headers.get("profile-update-interval"),
+    title,
+  });
   return text;
 }
 
-/** 读取最近一次捕获的订阅元信息 */
+/** 解析 subscription-userinfo 头（upload/download/total 为字节，expire 为 Unix 秒） */
+function parseUserInfo(header) {
+  const out = {};
+  for (const part of String(header).split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const k = part.slice(0, eq).trim();
+    const v = Number(part.slice(eq + 1).trim());
+    if (!k || !Number.isFinite(v)) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * 聚合各订阅的元信息（供 /sub 端点透传，单订阅时与机场原始值一致）：
+ *  - 流量 upload/download/total：各订阅求和（合并配置包含所有机场的节点，总量即之和）
+ *  - expire：取最早（任一订阅到期，合并配置即开始缺节点，按最早提醒续费）
+ *  - Profile-Update-Interval：取最小
+ *  - 标题：各订阅名拼接（SUB_TITLE 环境变量设置时固定为该值）
+ */
 function getSubInfo() {
-  return subInfo;
+  const entries = [...subInfoMap.values()].filter(Boolean);
+  if (entries.length === 0) return { userinfo: null, updateInterval: null, title: null };
+  let upload = 0;
+  let download = 0;
+  let total = 0;
+  let hasTraffic = false;
+  let expire = null;
+  const intervals = [];
+  const titles = [];
+  for (const e of entries) {
+    if (e.userinfo) {
+      const p = parseUserInfo(e.userinfo);
+      if (p.upload !== undefined || p.download !== undefined || p.total !== undefined) hasTraffic = true;
+      upload += p.upload || 0;
+      download += p.download || 0;
+      total += p.total || 0;
+      if (p.expire > 0 && (expire === null || p.expire < expire)) expire = p.expire;
+    }
+    if (e.updateInterval) {
+      const n = parseFloat(e.updateInterval);
+      if (Number.isFinite(n) && n > 0) intervals.push({ raw: String(e.updateInterval).trim(), num: n });
+    }
+    if (e.title) titles.push(e.title);
+  }
+  const parts = [];
+  if (hasTraffic) {
+    parts.push(`upload=${Math.round(upload)}; download=${Math.round(download)}; total=${Math.round(total)}`);
+  }
+  if (expire) parts.push(`expire=${expire}`);
+  intervals.sort((a, b) => a.num - b.num);
+  return {
+    userinfo: parts.length ? parts.join("; ") : null,
+    updateInterval: intervals.length ? intervals[0].raw : null,
+    title: process.env.SUB_TITLE || (titles.length ? titles.join(" + ") : null),
+  };
 }
 
 /** 按顺序尝试各下载源，失败自动换源/重试；全部失败返回 null */
@@ -379,6 +434,7 @@ async function fetchAndParseSubscription() {
   let okCount = 0;
   const perUrl = [];
   const perUrlProxies = []; // 每个订阅各自的节点（原始名），供页面按订阅分组展示
+  subInfoMap.clear(); // 元信息只反映本次拉取的订阅（已删除的订阅不再参与聚合）
 
   for (const url of urls) {
     log(`下载订阅 ${url}`);
