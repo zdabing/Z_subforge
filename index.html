@@ -579,7 +579,10 @@
     <div style="background:var(--card-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">
         <span style="font-size:12px;color:var(--muted);font-weight:600">生成开关</span>
-        <span class="hint">分流策略、地区分组等选项</span>
+        <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+          <span class="hint">分流策略、地区分组等选项</span>
+          <button id="btnScriptLite" class="sm" disabled title="保留手动选择、自动选择、Google、AI、Telegram、Steam 和 AdBlock，关闭其他分流组及极简模式">一键精简</button>
+        </span>
       </div>
       <div id="scriptOptions"></div>
     </div>
@@ -646,11 +649,20 @@ function toast(text, type) {
 
 // ---------- 脚本版（动态生成） ----------
 const scriptGroups = ["基础策略", "分流策略", "生成配置"];
+let scriptOptionsSaving = false;
+let scriptStatusBusy = false;
+
+function updateScriptOptionControls() {
+  const disabled = scriptOptionsSaving || scriptStatusBusy;
+  $("btnScriptLite").disabled = disabled || !$("scriptOptions").querySelector("input[data-optkey]");
+  $("scriptOptions").querySelectorAll("input[data-optkey]").forEach((cb) => { cb.disabled = disabled; });
+}
 
 async function refreshScriptStatus() {
   try {
     const r = await fetch("/api/script/status");
     const s = await r.json();
+    scriptStatusBusy = !!s.busy;
 
     $("busyBadge").textContent = s.busy ? "运行中…" : "空闲";
     $("busyBadge").classList.toggle("running", !!s.busy);
@@ -687,6 +699,7 @@ async function refreshScriptStatus() {
     }
 
     if (s.options) renderScriptOptions(s.options);
+    updateScriptOptionControls();
   } catch {
     $("stScriptSha").textContent = "服务未连接";
   }
@@ -722,19 +735,71 @@ function renderScriptOptions(options) {
     cb.addEventListener("change", () => saveScriptOption(cb));
   });
   renderScriptNodeSel();
+  updateScriptOptionControls();
 }
 
 async function saveScriptOption(cb) {
+  scriptOptionsSaving = true;
+  updateScriptOptionControls();
   try {
-    await fetch("/api/script/options", {
+    const r = await fetch("/api/script/options", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ [cb.dataset.optkey]: cb.checked }),
     });
+    const d = await r.json();
+    if (!r.ok || !d.ok) throw new Error(d.error || "保存失败");
     appendScriptLog(`开关「${cb.dataset.optkey}」已${cb.checked ? "开启" : "关闭"}`);
   } catch {
     cb.checked = !cb.checked;
     toast("保存开关失败", "err");
+  } finally {
+    scriptOptionsSaving = false;
+    updateScriptOptionControls();
+  }
+}
+
+async function applyLitePreset() {
+  if (scriptOptionsSaving || scriptStatusBusy) return;
+  const btn = $("btnScriptLite");
+  scriptOptionsSaving = true;
+  btn.textContent = "保存中…";
+  updateScriptOptionControls();
+  try {
+    const statusResponse = await fetch("/api/script/status");
+    const status = await statusResponse.json();
+    if (!statusResponse.ok) throw new Error(status.error || "读取开关失败");
+    scriptStatusBusy = !!status.busy;
+    if (scriptStatusBusy) throw new Error("正在生成或同步配置，请稍后重试");
+    if (!Array.isArray(status.options) || !status.options.length) throw new Error("请先下载上游脚本");
+    const keep = new Set(["手动选择", "自动选择", "Google", "AI", "Telegram", "Steam", "AdBlock"]);
+    const changes = {};
+    for (const option of status.options) {
+      if (option.group === "基础策略" || option.group === "分流策略") {
+        changes[option.key] = keep.has(option.key);
+      } else if (option.key === "极简模式") {
+        changes[option.key] = false;
+      }
+    }
+    const response = await fetch("/api/script/options", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes),
+    });
+    const saved = await response.json();
+    if (!response.ok || !saved.ok) throw new Error(saved.error || "保存失败");
+    renderScriptOptions(status.options.map((option) => ({
+      ...option,
+      value: Object.prototype.hasOwnProperty.call(changes, option.key) ? changes[option.key] : option.value,
+    })));
+    appendScriptLog("已应用精简分组：保留手动选择、自动选择、Google、AI、Telegram、Steam 和 AdBlock，极简模式关闭。重新生成配置后生效。");
+    toast("精简设置已保存，重新生成配置后生效", "ok");
+  } catch (e) {
+    toast("一键精简失败：" + e.message, "err");
+  } finally {
+    scriptOptionsSaving = false;
+    btn.textContent = "一键精简";
+    updateScriptOptionControls();
   }
 }
 
@@ -1334,6 +1399,7 @@ $("btnSubAdd").addEventListener("click", () => { subUrls.push(""); renderScriptS
 $("btnSubSave").addEventListener("click", saveScriptSubs);
 $("btnCoreGen").addEventListener("click", doCoreGen);
 $("btnScriptSync").addEventListener("click", doScriptSync);
+$("btnScriptLite").addEventListener("click", applyLitePreset);
 $("btnGistSave").addEventListener("click", saveGistCfg);
 $("btnGistTest").addEventListener("click", testGistPush);
 $("gistEnabled").addEventListener("change", saveGistEnabled);

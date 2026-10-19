@@ -1,5 +1,7 @@
 # subforge · 订阅配置生成
 
+当前版本：**v1.1.0** · [更新记录](CHANGELOG.md)
+
 本地 Web 控制台，把机场订阅 + [AIsouler/MyClash](https://github.com/AIsouler/MyClash) 的 `mihomoScript.js` 生成成完整 mihomo 配置，并可作为客户端的订阅源（`/sub`）。
 
 1. **YAML 版**：同步上游 `Config/mihomoConfig.yaml`，按补丁（订阅链接等）加工 → `mihomoConfig.synced.yaml`
@@ -51,13 +53,19 @@ npm install        rem 首次：安装 js-yaml（脚本版需要）
 
 ## 脚本版开关
 
-来自上游 `mihomoScript.js` 顶部的 `ruleOptionsEnable`（25 项），在页面里分组展示、独立开关：
+来自上游 `mihomoScript.js` 顶部的 `ruleOptionsEnable`，在页面里动态分组展示、独立开关：
 
 - **基础策略**：手动选择 / 自动选择 / 负载均衡
 - **分流策略**：AI / Media / FCM / Google / Microsoft / Apple / Telegram / Steam / TikTok / Twitter / Emby / PikPak / Spotify / Crypto / EHentai / AdBlock
-- **生成配置**：生成地区自动选择组 / 隐藏地区手动选择组 / 分流组添加所有节点 / 过滤高倍率节点 / 过滤非地区节点 / 屏蔽国外QUIC
+- **生成配置**：极简模式 / 生成地区自动选择组 / 隐藏地区手动选择组 / 生成倍率组 / 分流组添加所有节点 / 过滤低倍率节点 / 过滤高倍率节点 / 过滤非地区节点 / 屏蔽国外QUIC / 代理IPV4优先 / 代理IPV6优先
 
 开关状态存 `settings.json` 的 `scriptOptions`。上游脚本改版后重新「下载上游脚本」即可同步新开关。
+
+“生成开关”右侧的 **一键精简** 会保留手动选择、自动选择及 Google、AI、Telegram、Steam、AdBlock，关闭其他基础/分流策略和极简模式，并立即保存。地区分组、节点过滤、IP 偏好和“默认代理增加直连”等生成选项保持原设置。点击后重新生成配置、更新客户端订阅即可生效；仍可手动调整各开关。
+
+“生成配置”还提供本地扩展开关 **默认代理增加直连**（默认关闭）：开启后，在最终配置的“默认代理”组末尾追加“直连”，不自动切换当前选择。关闭后重新生成即恢复上游候选列表。该选项不修改上游脚本，下载更新上游脚本后仍会保留。
+
+未保存的开关使用上游默认值；策略组的 `interval`、`lazy` 等参数保留上游执行结果。已保存的开关、节点归属地标注、分流组节点勾选和多订阅合并仍会按用户设置生效。节点勾选会跟随上游标准化和多订阅重名处理后的实际名称，已被过滤的节点不会写入策略组。YAML 输出中需要引号的字符串统一使用双引号。
 
 ## CLI
 

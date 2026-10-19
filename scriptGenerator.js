@@ -229,26 +229,13 @@ function extractOptions(source) {
         "其他";
       continue;
     }
-    const lm = line.match(/^\s*([A-Za-z\u4e00-\u9fa5]+):[^/]*?\/\/\s*(.+)$/);
+    const lm = line.match(/^\s*([A-Za-z_$\u4e00-\u9fa5][\w$\u4e00-\u9fa5]*):[^/]*?\/\/\s*(.+)$/);
     if (lm) {
       labels[lm[1].trim()] = lm[2].trim();
       groups[lm[1].trim()] = currentGroup;
     }
   }
   return { defaults, labels, groups };
-}
-
-/**
- * 本地默认值覆盖：优先于上游脚本 ruleOptionsEnable 的默认值。
- * 用户要求「屏蔽国外QUIC」默认关闭——即使上游脚本默认是 true，
- * 且 settings.json 未保存该开关时，也按 false 处理。
- */
-const DEFAULT_OVERRIDES = { 屏蔽国外QUIC: false };
-
-function defaultOf(key, upstreamDefault) {
-  return Object.prototype.hasOwnProperty.call(DEFAULT_OVERRIDES, key)
-    ? DEFAULT_OVERRIDES[key]
-    : upstreamDefault;
 }
 
 /**
@@ -259,7 +246,7 @@ function injectOptions(source, userOptions) {
   const { defaults } = extractOptions(source);
   const merged = {};
   for (const [key, val] of Object.entries(defaults)) {
-    merged[key] = typeof userOptions[key] === "boolean" ? userOptions[key] : defaultOf(key, val);
+    merged[key] = typeof userOptions[key] === "boolean" ? userOptions[key] : val;
   }
   const replaced = source.replace(
     OPTIONS_DEF_RE,
@@ -271,10 +258,10 @@ function injectOptions(source, userOptions) {
   return { source: replaced, options: merged };
 }
 
-/** 执行脚本源码，返回 { main, defaults, labels } */
+/** 执行脚本源码，同时复用上游节点标准化函数以同步用户勾选的名称。 */
 function executeScript(source) {
   const { defaults, labels } = extractOptions(source);
-  const code = source + "\n;module.exports = { main, ruleOptionsEnable };";
+  const code = source + "\n;module.exports = { main, ruleOptionsEnable, normalizeProxyName: typeof normalizeProxyName === 'function' ? normalizeProxyName : null };";
   const factory = new Function(
     "module",
     "exports",
@@ -288,7 +275,7 @@ function executeScript(source) {
   if (typeof mod.exports.main !== "function") {
     throw new Error("脚本执行后未找到 main 函数");
   }
-  return { main: mod.exports.main, defaults, labels };
+  return { main: mod.exports.main, normalizeProxyName: mod.exports.normalizeProxyName, defaults, labels };
 }
 
 // ---------- 快照读写 ----------
@@ -321,6 +308,45 @@ function saveOptions(options) {
   s.scriptOptions = options;
   settingsSync.saveSettings(s);
   return options;
+}
+
+// 本地扩展开关仅用于生成后的处理，不注入上游 ruleOptionsEnable。
+const LOCAL_OPTIONS = [
+  {
+    key: "默认代理增加直连",
+    label: "在默认代理中增加直连选项，不自动切换",
+    group: "生成配置",
+    default: false,
+  },
+];
+
+/** 合并上游开关与本地扩展开关，供状态与脚本同步接口统一展示。 */
+function listOptions(source) {
+  const { defaults, labels, groups } = extractOptions(source);
+  const user = loadOptions();
+  return [
+    ...Object.entries(defaults).map(([key, def]) => ({
+      key,
+      label: labels[key] || "",
+      group: groups[key] || "其他",
+      default: def,
+    })),
+    ...LOCAL_OPTIONS,
+  ].map((option) => ({
+    ...option,
+    value: typeof user[option.key] === "boolean" ? user[option.key] : option.default,
+  }));
+}
+
+/** 追加到末尾，保留原有候选顺序与默认选择；关闭时保留上游产物。 */
+function applyLocalOptions(result, userOptions) {
+  if (userOptions.默认代理增加直连 !== true) return;
+  const groups = result["proxy-groups"] || [];
+  const group = groups.find((g) => g.name === "默认代理");
+  if (group && Array.isArray(group.proxies) &&
+      groups.some((g) => g.name === "直连") && !group.proxies.includes("直连")) {
+    group.proxies.push("直连");
+  }
 }
 
 // ---------- Gist 推送配置（settings.json 顶层，token 不上传 Git） ----------
@@ -490,9 +516,19 @@ async function fetchAndParseSubscription() {
     if (!flag || p.name.startsWith(flag)) return p.name;
     return `${flag} ${p.name}`;
   };
-  const flaggedProxies = mergedProxies.map((p) =>
-    flaggedName(p) === p.name ? p : { ...p, name: flaggedName(p) },
-  );
+  const flagProxies = (proxies) => {
+    const renamed = new Map(proxies.map((p) => [p.name, flaggedName(p)]));
+    return proxies.map((p) => {
+      const name = renamed.get(p.name);
+      const target = renamed.get(p["dialer-proxy"]);
+      return {
+        ...p,
+        name,
+        ...(target !== undefined ? { "dialer-proxy": target } : {}),
+      };
+    });
+  };
+  const flaggedProxies = flagProxies(mergedProxies);
   const data = {
     proxies: flaggedProxies,
     names: flaggedProxies.map((p) => p.name),
@@ -500,7 +536,7 @@ async function fetchAndParseSubscription() {
     byUrl: perUrlProxies.map((e) => ({ url: e.url, names: e.proxies.map(flaggedName) })),
     // 每个订阅独立数据（带国旗后的节点 + 订阅自带 dns/hosts），供「各订阅分别执行脚本再合并产物」
     subs: perUrlProxies.map((e) => {
-      const flagged = e.proxies.map((p) => (flaggedName(p) === p.name ? p : { ...p, name: flaggedName(p) }));
+      const flagged = flagProxies(e.proxies);
       const sub = { url: e.url, proxies: flagged };
       if (e.dns) sub.dns = e.dns;
       if (e.hosts) sub.hosts = e.hosts;
@@ -533,21 +569,6 @@ function saveNodeSelection(selection) {
   return selection;
 }
 
-/**
- * 常驻健康检查：所有策略组 lazy 关、探测间隔缩到 2 分钟。
- * 上游模板默认 lazy:true（仅流量触发才测），重握手协议（xhttp/Reality/mlkem768）
- * 的节点冷启动开销大，表现为首次访问高延迟/超时；改为常驻后节点延迟持续刷新。
- */
-function applyKeepAlive(result) {
-  const groups = result["proxy-groups"];
-  if (!Array.isArray(groups)) return;
-  for (const g of groups) {
-    if (!g || typeof g !== "object") continue;
-    g.lazy = false;
-    if (typeof g.interval === "number" && g.interval > 0) g.interval = 120;
-  }
-}
-
 // ---------- 多订阅产物合并 ----------
 
 /** 结构化比较（脚本产物均为纯 JSON 数据，可直接序列化比较） */
@@ -565,11 +586,15 @@ function sameProxy(a, b) {
  *  - dns：合并 proxy-server-nameserver-policy（各机场私有 DNS 分域名解析）与
  *    fake-ip-filter 并集（各订阅节点服务器的 fake-ip 放行条目）。
  *  - 其余顶层字段（rules / tun / ntp 等，仅取决于开关）：取第一个产物。
+ * nameMaps 可选输出：按订阅记录节点改名，供用户勾选同步到合并后的名字。
  */
-function mergeMainResults(results) {
+function mergeMainResults(results, nameMaps = []) {
   const list = (Array.isArray(results) ? results : []).filter(Boolean);
   if (list.length === 0) throw new Error("无可合并的脚本产物");
-  if (list.length === 1) return list[0];
+  if (list.length === 1) {
+    nameMaps.push(new Map((list[0].proxies || []).map((p) => [p.name, p.name])));
+    return list[0];
+  }
 
   const mergedProxies = [];
   const taken = new Set(); // 已占用的节点名
@@ -599,6 +624,7 @@ function mergeMainResults(results) {
         nameMap.set(name, name);
       }
     }
+    nameMaps.push(nameMap);
     return { result: r, nameMap, proxies };
   });
 
@@ -671,14 +697,15 @@ function mergeMainResults(results) {
 
 /**
  * 按用户勾选（scriptNodeSelection）替换分流策略组的节点列表：
- *  - 勾选节点名与本次订阅实际节点名求交集（订阅更新后失效的名字静默剔除，不报错）
+ *  - 勾选节点名通过上游标准化与多订阅改名映射到产物中的实际节点名
+ *  - 订阅更新后失效或被上游过滤的名字静默剔除，不写入悬空引用
  *  - 交集为空（未勾选或全部失效）→ 保持脚本自动生成的列表不变
  *  - 组不存在（对应开关已关闭）→ 跳过
  *  - default-selected 不在新列表内时改为第一个勾选节点，避免指向失效名字
  * 返回被替换的组名数组。
  */
-function applyNodeSelection(result, selection, allNames) {
-  const nameSet = new Set(allNames);
+function applyNodeSelection(result, selection, nameAliases = new Map()) {
+  const nameSet = new Set((result.proxies || []).map((p) => p.name));
   const groups = result["proxy-groups"];
   const replaced = [];
   if (!Array.isArray(groups)) return replaced;
@@ -686,7 +713,10 @@ function applyNodeSelection(result, selection, allNames) {
     if (!Array.isArray(chosen)) continue;
     const group = groups.find((g) => g && g.name === groupName);
     if (!group || !Array.isArray(group.proxies)) continue;
-    const picked = chosen.filter((n) => typeof n === "string" && nameSet.has(n));
+    const picked = [...new Set(chosen
+      .filter((n) => typeof n === "string")
+      .flatMap((n) => nameAliases.get(n) || [n])
+      .filter((n) => nameSet.has(n)))];
     if (picked.length === 0) continue;
     group.proxies = [...picked];
     if (group["default-selected"] !== undefined && !picked.includes(group["default-selected"])) {
@@ -707,7 +737,7 @@ const FALLBACK_REGIONS = {
   日本: "🇯🇵",
   美国: "🇺🇸",
   新加坡: "🇸🇬",
-  台湾省: "🇹🇼",
+  台湾: "🇹🇼",
 };
 
 let regionFlagCache = null;
@@ -715,7 +745,7 @@ let regionFlagCache = null;
 /** 解析上游脚本里的地区名 → 国旗；快照不可用时回落内置映射 */
 function getRegionFlags() {
   if (regionFlagCache) return regionFlagCache;
-  const flags = { ...FALLBACK_REGIONS };
+  const flags = {};
   const source = readScriptSource();
   if (source) {
     const re = /name:\s*'([^']+)',\s*\n\s*flag:\s*'([^']+)'/g;
@@ -723,14 +753,19 @@ function getRegionFlags() {
       flags[m[1]] = m[2];
     }
   }
-  regionFlagCache = flags;
-  return flags;
+  regionFlagCache = Object.keys(flags).length > 0 ? flags : { ...FALLBACK_REGIONS };
+  return regionFlagCache;
 }
 
 function loadNodeRegion() {
   const s = settingsSync.loadSettings();
   const reg = s[NODE_REGION_KEY];
-  return reg && typeof reg === "object" ? reg : {};
+  if (!reg || typeof reg !== "object") return {};
+  const flags = getRegionFlags();
+  return Object.fromEntries(Object.entries(reg).map(([name, region]) => [
+    name,
+    region === "台湾省" && !flags[region] && flags.台湾 ? "台湾" : region,
+  ]));
 }
 
 /**
@@ -841,7 +876,7 @@ async function syncScript() {
     return { ok: false, error: "上游脚本下载失败，请检查网络后重试" };
   }
   try {
-    const { defaults, labels, groups } = extractOptions(source);
+    const options = listOptions(source);
     fs.mkdirSync(SCRIPT_DIR, { recursive: true });
     const now = new Date().toISOString();
     const meta = { time: now, sha: sha1(source) };
@@ -852,6 +887,8 @@ async function syncScript() {
       meta.upstreamMessage = upstream.message; // 提交标题（如 feat: 支持添加自定义节点…）
     }
     fs.writeFileSync(SCRIPT_FILE, source, "utf8");
+    regionFlagCache = null;
+    clearSubCache();
     // 保留上次生成时间（generate 写入的 lastGenTime），不因下载脚本被覆盖
     try {
       const old = JSON.parse(fs.readFileSync(SCRIPT_META, "utf8"));
@@ -859,14 +896,6 @@ async function syncScript() {
     } catch {}
     fs.writeFileSync(SCRIPT_META, JSON.stringify(meta, null, 2) + "\n", "utf8");
     log("上游脚本已保存到本地快照。");
-    const user = loadOptions();
-    const options = Object.entries(defaults).map(([key, def]) => ({
-      key,
-      label: labels[key] || "",
-      group: groups[key] || "其他",
-      value: typeof user[key] === "boolean" ? user[key] : defaultOf(key, def),
-      default: def,
-    }));
     return { ok: true, sha: meta.sha, time: meta.time, options, upstream };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -886,7 +915,7 @@ async function generate() {
     }
     const user = loadOptions();
     const { source: injected } = injectOptions(source, user);
-    const { main } = executeScript(injected);
+    const { main, normalizeProxyName } = executeScript(injected);
 
     // 订阅 → 每个订阅独立数据（节点带国旗 + 订阅自带 dns/hosts）
     const { subs, names, byUrl } = await fetchAndParseSubscription();
@@ -894,6 +923,7 @@ async function generate() {
     // 每个订阅分别执行一次脚本处理（开关已注入），再把产物合并为一份配置：
     // 如 50 节点 + 50 节点 → 处理后合并为 100 节点，而不是先合并节点再处理（同名会被去重丢失）
     const results = [];
+    const originalNameMaps = [];
     const perSubLog = [];
     for (const sub of subs) {
       const config = { proxies: sub.proxies };
@@ -904,24 +934,38 @@ async function generate() {
         throw new Error("脚本执行结果异常：缺少 proxies 或 proxy-groups");
       }
       results.push(r);
+      originalNameMaps.push(new Map(sub.proxies.map((p) => [
+        p.name,
+        normalizeProxyName ? normalizeProxyName(p).name : p.name,
+      ])));
       perSubLog.push(`${sub.proxies.length} 节点`);
     }
     if (subs.length > 1) {
       log(`已按订阅分别执行脚本（${perSubLog.join(" + ")}），合并产物。`);
     }
 
-    const result = mergeMainResults(results);
+    const mergedNameMaps = [];
+    const result = mergeMainResults(results, mergedNameMaps);
+    const nameAliases = new Map();
+    for (let i = 0; i < originalNameMaps.length; i++) {
+      for (const [original, normalized] of originalNameMaps[i]) {
+        const merged = mergedNameMaps[i].get(normalized);
+        if (!merged) continue;
+        const aliases = nameAliases.get(original) || [];
+        if (!aliases.includes(merged)) aliases.push(merged);
+        nameAliases.set(original, aliases);
+      }
+    }
 
     // 后处理：按用户勾选替换分流策略组节点列表
-    const replacedGroups = applyNodeSelection(result, loadNodeSelection(), names);
+    const replacedGroups = applyNodeSelection(result, loadNodeSelection(), nameAliases);
     if (replacedGroups.length > 0) {
       log(`已应用节点勾选：${replacedGroups.join("、")}`);
     }
+    applyLocalOptions(result, user);
 
-    // 后处理：策略组常驻健康检查（lazy 关 + 2 分钟间隔）
-    applyKeepAlive(result);
-
-    const outYaml = yaml.dump(result, { lineWidth: -1, noRefs: true });
+    // 需要引号的字符串统一使用双引号，避免重新序列化后变成单引号。
+    const outYaml = yaml.dump(result, { lineWidth: -1, noRefs: true, quotingType: '"' });
     const previous = fs.existsSync(OUTPUT_FILE) ? fs.readFileSync(OUTPUT_FILE, "utf8") : null;
     const changed = previous !== outYaml;
     if (!changed) {
@@ -982,15 +1026,7 @@ function getStatus() {
   let options = null;
   if (source) {
     try {
-      const { defaults, labels, groups } = extractOptions(source);
-      const user = loadOptions();
-      options = Object.entries(defaults).map(([key, def]) => ({
-        key,
-        label: labels[key] || "",
-        group: groups[key] || "其他",
-        value: typeof user[key] === "boolean" ? user[key] : defaultOf(key, def),
-        default: def,
-      }));
+      options = listOptions(source);
     } catch {}
   }
   let output = null;
@@ -1057,7 +1093,6 @@ module.exports = {
   loadNodeSelection,
   saveNodeSelection,
   applyNodeSelection,
-  applyKeepAlive,
   getRegionFlags,
   loadNodeRegion,
   saveNodeRegion,

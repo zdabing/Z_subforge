@@ -37,6 +37,22 @@ jobs:
           username: ${{ steps.dockerhub.outputs.user }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: 生成镜像标签
+        id: image-tags
+        env:
+          SUBFORGE_IMAGE: ${{ steps.dockerhub.outputs.user }}/subforge
+          SUBFORGE_RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          {
+            echo 'tags<<EOF'
+            echo "${SUBFORGE_IMAGE}:latest"
+            echo "${SUBFORGE_IMAGE}:${GITHUB_SHA}"
+            if [ -n "$SUBFORGE_RELEASE_TAG" ]; then
+              echo "${SUBFORGE_IMAGE}:${SUBFORGE_RELEASE_TAG}"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
@@ -44,8 +60,6 @@ jobs:
           push: true
           # x86_64 架构（NAS/服务器常见）
           platforms: linux/amd64
-          tags: |
-            ${{ steps.dockerhub.outputs.user }}/subforge:latest
-            ${{ steps.dockerhub.outputs.user }}/subforge:${{ github.sha }}
+          tags: ${{ steps.image-tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
